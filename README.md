@@ -298,8 +298,9 @@ And end to end with Spotify:
 
 ## Next
 
-1. Local MP3 source: MediaStore + ID3 + our own `MediaSession` — the one source this app
-   would fully own.
+1. [Local MP3 source](https://github.com/HEUSEC/dualmusic-thor/issues/1): MediaStore, a
+   `MediaSession` of our own, and a queue this app owns rather than borrows — the one
+   source no API policy can withdraw.
 2. Colour from the artwork: tint the shell with the cover's own hue instead of the fixed
    mint, which is what the design notes already promise.
 3. Ambient mode on the big panel once nothing has played for a while, with a pixel shift
