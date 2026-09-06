@@ -16,15 +16,12 @@
     <string name="next">Next</string>
 
     <string name="queue">Queue</string>
-    <string name="volume">Volume</string>
     <string name="queue_title">Up next</string>
     <string name="queue_empty">This player publishes no queue</string>
 
-    <string name="swap_screens">Swap</string>
     <string name="next_session">Next app</string>
     <string name="single_screen">Single screen</string>
     <string name="artwork">Album art</string>
-    <string name="open_apple_music">Apple Music</string>
     <string name="back">Back</string>
     <string name="connect_spotify">Connect Spotify</string>
     <string name="spotify_connecting">Connecting to Spotify…</string>
@@ -43,7 +40,11 @@
     <string name="no_lyrics">No lyrics found for this track</string>
     <string name="spotify_not_configured">No Spotify client ID compiled in</string>
     <string name="browse_root">Your Library</string>
-    <string name="connected">Connected</string>
+    <string name="liked_songs">Liked Songs</string>
+    <string name="liked_songs_hint">Everything you saved</string>
+    <string name="recommended_by_spotify">Made by Spotify</string>
+    <string name="recommended_hint">Mixes and editorial picks</string>
+    <string name="n_tracks">%1$d tracks</string>
+    <string name="library_needs_auth">Authorise Spotify in the browser to see your library</string>
     <string name="swap">Swap</string>
-    <string name="apple_music_missing">Apple Music is not installed</string>
 </resources>

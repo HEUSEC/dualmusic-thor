@@ -4,16 +4,24 @@ import android.util.Log
 import com.spotify.protocol.types.ListItem
 
 /**
- * Navigation over Spotify's browse tree: where we are, what is on screen, and what a
- * tap means. Holds no views.
+ * Navigation over the browse tree: where we are, what is on screen, and what a tap
+ * means. Holds no views.
  *
- * The tree is the one Spotify exposes to car head units, so the top level is the user's
- * own personalised sections ("Creato per …", "Nuove uscite per te"). Items either have
- * children (open them) or are playable (play them); some are both, in which case a tap
- * opens and the play button on the row would be the way to play — for now, opening wins
- * because it is the recoverable choice.
+ * The tree has two sources, because one of them is not enough. App Remote's `ContentApi`
+ * returns only Spotify's editorial sections — measured on the device, `default`,
+ * `navigation` and `automotive` all answer with the same thirty rows of "Creato per …"
+ * and none of them contains the user's own playlists. So the root is the user's library
+ * from the Web API ([SpotifyWebApi]), and Spotify's recommendations are one row inside
+ * it rather than the whole screen. Without a Web API token the old tree is still the
+ * root, which is better than an empty one.
+ *
+ * Items either have children (open them) or are playable (play them); some are both, in
+ * which case a tap opens, because opening is the recoverable choice.
  */
-class SpotifyBrowser(private val remote: SpotifyRemote) {
+class SpotifyBrowser(
+    private val remote: SpotifyRemote,
+    private val web: SpotifyWebApi? = null,
+) {
 
     data class State(
         val title: String,
@@ -27,6 +35,12 @@ class SpotifyBrowser(private val remote: SpotifyRemote) {
 
     private companion object {
         const val TAG = "SpotifyBrowser"
+
+        /** URIs App Remote can play directly; anything else goes through ContentApi. */
+        val PLAYABLE_PREFIXES = listOf(
+            "spotify:track:", "spotify:playlist:", "spotify:album:", "spotify:artist:",
+            "spotify:show:", "spotify:episode:",
+        )
     }
 
     private val stack = ArrayDeque<ListItem>()
@@ -52,7 +66,7 @@ class SpotifyBrowser(private val remote: SpotifyRemote) {
 
     fun loadRoot() {
         stack.clear()
-        load { onItems, onError -> remote.loadRoot(onItems, onError) }
+        load(null)
     }
 
     /** A tap on a row: descend when possible, otherwise play it. */
@@ -60,12 +74,26 @@ class SpotifyBrowser(private val remote: SpotifyRemote) {
         Log.i(TAG, "tapped ${item.title} playable=${item.playable} children=${item.hasChildren} uri=${item.uri}")
         if (item.hasChildren) {
             stack.addLast(item)
-            load { onItems, onError -> remote.loadChildren(item, 0, onItems, onError) }
+            load(item)
         } else if (item.playable) {
-            remote.play(item) { reason ->
-                error = reason
-                publish()
-            }
+            play(item)
+        }
+    }
+
+    /**
+     * A row built from the Web API is not a node of App Remote's tree, so
+     * `playContentItem` has nothing to resolve; anything with a real Spotify URI is
+     * played by URI instead, which is also what search results already do.
+     */
+    private fun play(item: ListItem) {
+        val onError: (String) -> Unit = { reason ->
+            error = reason
+            publish()
+        }
+        if (PLAYABLE_PREFIXES.any { item.uri.startsWith(it) }) {
+            remote.playUri(item.uri, onError)
+        } else {
+            remote.play(item, onError)
         }
     }
 
@@ -73,36 +101,52 @@ class SpotifyBrowser(private val remote: SpotifyRemote) {
     fun back(): Boolean {
         if (stack.isEmpty()) return false
         stack.removeLast()
-        val parent = stack.lastOrNull()
-        if (parent == null) {
-            loadRoot()
-        } else {
-            load { onItems, onError -> remote.loadChildren(parent, 0, onItems, onError) }
-        }
+        load(stack.lastOrNull())
         return true
     }
 
-    private inline fun load(
-        request: (onItems: (List<ListItem>) -> Unit, onError: (String) -> Unit) -> Unit,
-    ) {
+    /**
+     * Loads the children of [item], or the root when it is null, from whichever source
+     * owns that level.
+     */
+    private fun load(item: ListItem?) {
         loading = true
         error = null
         publish()
-        request(
-            { loaded ->
-                Log.i(TAG, "loaded ${loaded.size} items")
-                items = loaded
-                loading = false
-                publish()
-            },
-            { reason ->
-                Log.w(TAG, "load failed: $reason")
-                items = emptyList()
-                loading = false
-                error = reason
-                publish()
-            },
-        )
+
+        val onItems: (List<ListItem>) -> Unit = { loaded ->
+            Log.i(TAG, "loaded ${loaded.size} items")
+            items = loaded
+            loading = false
+            publish()
+        }
+        val onError: (String) -> Unit = { reason ->
+            Log.w(TAG, "load failed: $reason")
+            items = emptyList()
+            loading = false
+            error = reason
+            publish()
+        }
+
+        val library = web?.takeIf { it.isAuthorised() }
+        when {
+            item == null ->
+                if (library != null) library.library(onItems, onError)
+                else remote.loadRoot(onItems = onItems, onError = onError)
+
+            item.uri == SpotifyWebApi.LIKED_URI ->
+                library?.savedTracks(onItems, onError) ?: onError("not authorised")
+
+            item.uri == SpotifyWebApi.RECOMMENDED_URI ->
+                remote.loadRoot(onItems = onItems, onError = onError)
+
+            // A playlist's own tracks are richer over the Web API — real titles, real
+            // covers — than the same node walked through ContentApi.
+            library != null && item.uri.startsWith("spotify:playlist:") ->
+                library.playlistTracks(item.uri, onItems, onError)
+
+            else -> remote.loadChildren(item, 0, onItems, onError)
+        }
     }
 
     private fun publish() {

@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Deeper levels: a white row. Fixed height whether or not it has a subtitle, so
-     the list never resizes per item. -->
+<!-- Every level of the tree is this row: one density, sized for a thumb on a small
+     panel. Fixed height whether or not it has a subtitle, so the list never resizes
+     per item. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rowRoot"
     android:layout_width="match_parent"
-    android:layout_height="48dp"
+    android:layout_height="62dp"
     android:background="@drawable/white_row"
     android:orientation="horizontal"
     android:stateListAnimator="@animator/press_scale"
@@ -14,8 +15,8 @@
 
     <ImageView
         android:id="@+id/rowThumb"
-        android:layout_width="31dp"
-        android:layout_height="31dp"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
         android:background="@drawable/thumb_placeholder_small"
         android:clipToOutline="true"
         android:scaleType="centerCrop"
@@ -25,7 +26,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:layout_marginStart="9dp"
+        android:layout_marginStart="11dp"
         android:layout_marginEnd="2dp"
         android:orientation="vertical">
 
@@ -35,7 +36,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
             android:textColor="@color/ink"
-            android:textSize="15sp"
+            android:textSize="17sp"
             android:singleLine="true"
             android:ellipsize="end" />
 
@@ -44,7 +45,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textColor="@color/ink_soft"
-            android:textSize="11sp"
+            android:textSize="13sp"
             android:singleLine="true"
             android:ellipsize="end"
             android:visibility="gone" />

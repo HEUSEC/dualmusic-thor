@@ -31,11 +31,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onSeekTo(positionMs: Long)
         fun onToggleQueue()
         fun onQueueItemTapped(entry: MediaHub.QueueEntry)
-        fun onVolumeChanged(value: Int)
         fun onSelectSession(session: MediaHub.SessionRef)
-        fun onSwapScreens()
         fun onGrantAccess()
-        fun onOpenAppleMusic()
         fun onConnectSpotify()
         fun onToggleLyrics()
         fun onOpenSearch()
@@ -47,26 +44,17 @@ class ControlsBinder(root: View, private val actions: Actions) {
 
     private val permissionBar: View = root.findViewById(R.id.permissionBar)
     private val sessionSwitcher: LinearLayout = root.findViewById(R.id.sessionSwitcher)
-    private val nearThumb: ImageView = root.findViewById(R.id.nearThumb)
     private val nearTitle: TextView = root.findViewById(R.id.nearTitle)
-    private val nearArtist: TextView = root.findViewById(R.id.nearArtist)
     private val nearClock: TextView = root.findViewById(R.id.nearClock)
     private val nearSeek: SeekBar = root.findViewById(R.id.nearSeek)
-    private val statusLine: TextView = root.findViewById(R.id.statusLine)
-    private val statusDot: View = root.findViewById(R.id.statusDot)
     private val btnPrev: ImageButton = root.findViewById(R.id.btnPrev)
     private val btnPlayPause: ImageButton = root.findViewById(R.id.btnPlayPause)
     private val btnNext: ImageButton = root.findViewById(R.id.btnNext)
     private val btnQueue: ImageButton = root.findViewById(R.id.btnQueue)
-    private val volumeRow: View = root.findViewById(R.id.volumeRow)
-    private val volumeSeek: SeekBar = root.findViewById(R.id.volumeSeek)
-    private val btnAppleMusic: TextView = root.findViewById(R.id.btnAppleMusic)
-    private val btnSwap: TextView = root.findViewById(R.id.btnSwap)
 
     private val nearTrackTap: View = root.findViewById(R.id.nearTrackTap)
     private val readingSpacer: View = root.findViewById(R.id.nearReadingSpacer)
     private val header: View = root.findViewById(R.id.controlsHeader)
-    private val statusBand: View = root.findViewById(R.id.statusBand)
     private val readingPanel: View = root.findViewById(R.id.nearLyricsPanel)
     private val bigArt: ImageView = root.findViewById(R.id.nearBigArt)
     private val bigTitle: TextView = root.findViewById(R.id.nearBigTitle)
@@ -88,13 +76,11 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private var readingMode = false
     private var searchMode = false
     private var queueMode = false
-    private var userChangingVolume = false
     private var trackKey: String? = null
     private var lastBrowseState: SpotifyBrowser.State? = null
     private var lastSpotifyStatus: SpotifyRemote.Status = SpotifyRemote.Status.Disconnected
     private var sourceLabel = ""
     private var track: MediaHub.Track? = null
-    private var boundThumb: Bitmap? = null
     private var userSeeking = false
 
     init {
@@ -103,8 +89,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnPlayPause.setOnClickListener { actions.onPlayPause() }
         btnNext.setOnClickListener { actions.onNext() }
         btnQueue.setOnClickListener { actions.onToggleQueue() }
-        btnSwap.setOnClickListener { actions.onSwapScreens() }
-        btnAppleMusic.setOnClickListener { actions.onOpenAppleMusic() }
         btnSpotify.setOnClickListener { actions.onConnectSpotify() }
         browseActionButton.setOnClickListener { actions.onConnectSpotify() }
         btnBrowseBack.setOnClickListener { actions.onBrowseBack() }
@@ -126,21 +110,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
             adapter.itemAt(position)?.onTap?.invoke()
         }
 
-        volumeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
-                // Volume is the one control that should follow the finger, not the lift.
-                if (fromUser) actions.onVolumeChanged(value)
-            }
-
-            override fun onStartTrackingTouch(bar: SeekBar) {
-                userChangingVolume = true
-            }
-
-            override fun onStopTrackingTouch(bar: SeekBar) {
-                userChangingVolume = false
-            }
-        })
-
         nearSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
                 if (!fromUser) return
@@ -160,7 +129,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
         })
     }
 
-    fun bind(snapshot: MediaHub.Snapshot, status: String) {
+    fun bind(snapshot: MediaHub.Snapshot) {
         permissionBar.visibility = if (snapshot.permissionGranted) View.GONE else View.VISIBLE
 
         val newTrack = snapshot.track
@@ -176,13 +145,10 @@ class ControlsBinder(root: View, private val actions: Actions) {
         nearTitle.text = newTrack?.title?.takeIf { it.isNotBlank() }
             ?: app.takeIf { it.isNotBlank() }
             ?: nearTitle.context.getString(R.string.no_session)
-        nearArtist.text = newTrack?.artist.orEmpty()
-        nearArtist.visibility = if (newTrack?.artist.isNullOrBlank()) View.GONE else View.VISIBLE
-        setThumb(newTrack?.artwork)
         bigArt.setImageBitmap(newTrack?.artwork)
         bigTitle.text = nearTitle.text
-        bigArtist.text = nearArtist.text
-        bigArtist.visibility = nearArtist.visibility
+        bigArtist.text = newTrack?.artist.orEmpty()
+        bigArtist.visibility = if (newTrack?.artist.isNullOrBlank()) View.GONE else View.VISIBLE
 
         btnPlayPause.setImageResource(
             if (newTrack?.isPlaying == true) android.R.drawable.ic_media_pause
@@ -207,14 +173,11 @@ class ControlsBinder(root: View, private val actions: Actions) {
         bindQueueButton(snapshot)
 
         if (songChanged) {
-            // refresh, not appear: the dock's thumb and title are hidden while reading.
-            Motion.refresh(nearThumb, Motion.NORMAL)
+            // refresh, not appear: the dock's title is hidden while reading.
             Motion.refresh(nearTrackTap, Motion.NORMAL, rise = dp(6).toFloat())
             Motion.refresh(bigArt, Motion.SLOW)
         }
         bindSessions(snapshot)
-        statusLine.text = status
-        statusDot.alpha = if (newTrack?.isPlaying == true) 1f else 0.35f
         updateProgress()
     }
 
@@ -235,18 +198,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private fun tint(colorRes: Int) =
         android.content.res.ColorStateList.valueOf(btnQueue.context.getColor(colorRes))
 
-    /**
-     * The volume the panel is allowed to move: the device music stream while the player
-     * renders locally, the session's own volume when it plays somewhere else. [max] of
-     * zero means neither exists, and the row goes away.
-     */
-    fun setVolume(current: Int, max: Int) {
-        volumeRow.visibility = if (max > 0 && !readingMode) View.VISIBLE else View.GONE
-        if (max <= 0 || userChangingVolume) return
-        if (volumeSeek.max != max) volumeSeek.max = max
-        if (volumeSeek.progress != current) volumeSeek.progress = current
-    }
-
     /** The player's own queue, in place of the browse tree. */
     fun setQueueMode(enabled: Boolean) {
         queueMode = enabled
@@ -255,8 +206,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
     }
 
     private fun showQueue(entries: List<MediaHub.QueueEntry>, title: String?) {
-        adapter.setTiles(false)
-        browseList.numColumns = 1
         adapter.submit(
             entries.map { entry ->
                 BrowseAdapter.Row(
@@ -287,8 +236,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
         if (enabled) {
             searchInput.requestFocus()
             ime?.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
-            adapter.setTiles(false)
-            browseList.numColumns = 1
             adapter.submit(emptyList())
             browseMessage.text = ""
             browseMessage.visibility = View.GONE
@@ -314,8 +261,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
 
     fun showSearchResults(items: List<ListItem>) {
         if (!searchMode) return
-        adapter.setTiles(false)
-        browseList.numColumns = 1
         adapter.submit(rowsOf(items))
         val empty = items.isEmpty()
         browseMessage.text = browseMessage.context.getString(R.string.search_empty)
@@ -336,14 +281,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         // The panel above names the track, so the dock stops repeating it and keeps
         // only what it alone provides: the clock, the seek bar and the transport.
         header.layoutParams = header.layoutParams.apply { height = dp(if (enabled) 32 else 45) }
-        nearThumb.visibility = if (enabled) View.GONE else View.VISIBLE
         nearTrackTap.visibility = if (enabled) View.GONE else View.VISIBLE
         readingSpacer.visibility = if (enabled) View.VISIBLE else View.GONE
-        // Swap and Apple Music are not what you reach for mid-song; that band is
-        // 48dp the cover can have instead.
-        statusBand.visibility = if (enabled) View.GONE else View.VISIBLE
-        // Same trade as the status band: mid-song the cover is worth more than a slider.
-        if (enabled) volumeRow.visibility = View.GONE
         bindBrowse(lastBrowseState, lastSpotifyStatus)
     }
 
@@ -440,10 +379,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
         browseCrumb.text = crumb
         browseCrumb.visibility = if (connected && crumb.isNotEmpty()) View.VISIBLE else View.GONE
 
-        // Tiles at the top level, rows deeper in — the design's two densities.
-        browseList.numColumns = if (atRoot) 2 else 1
-        adapter.setTiles(atRoot)
-
         if (!connected) {
             adapter.submit(emptyList())
             browseList.visibility = View.GONE
@@ -469,12 +404,6 @@ class ControlsBinder(root: View, private val actions: Actions) {
         browseMessage.text = message.orEmpty()
         browseMessage.visibility = if (message == null) View.GONE else View.VISIBLE
         browseList.visibility = if (message == null) View.VISIBLE else View.GONE
-    }
-
-    private fun setThumb(bitmap: Bitmap?) {
-        if (bitmap === boundThumb) return
-        boundThumb = bitmap
-        nearThumb.setImageBitmap(bitmap)
     }
 
     private fun setEnabled(button: View, enabled: Boolean) {
@@ -515,19 +444,12 @@ class ControlsBinder(root: View, private val actions: Actions) {
         )
 
         private var items: List<Row> = emptyList()
-        private var tiles = true
 
         private var animatedUpTo = -1
 
         fun submit(newItems: List<Row>) {
             items = newItems
             animatedUpTo = -1
-            notifyDataSetChanged()
-        }
-
-        fun setTiles(useTiles: Boolean) {
-            if (tiles == useTiles) return
-            tiles = useTiles
             notifyDataSetChanged()
         }
 
@@ -545,9 +467,9 @@ class ControlsBinder(root: View, private val actions: Actions) {
          */
         private fun bindArtwork(target: ImageView, item: ListItem?) {
             target.setImageDrawable(null)
-            // Editorial sections and queue entries carry no image; an empty grey square
-            // is not information.
-            if (item?.imageUri == null) {
+            // Editorial sections and queue entries carry no image — sections carry an
+            // empty id rather than none — and an empty grey square is not information.
+            if (item == null || ArtworkLoader.imageId(item) == null) {
                 target.visibility = View.GONE
                 return
             }
@@ -558,35 +480,22 @@ class ControlsBinder(root: View, private val actions: Actions) {
             }
         }
 
-        override fun getViewTypeCount(): Int = 2
-
-        override fun getItemViewType(position: Int): Int = if (tiles) 0 else 1
-
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val layout = if (tiles) R.layout.browse_tile else R.layout.browse_row
-            val view = convertView ?: inflater.inflate(layout, parent, false)
+            val view = convertView ?: inflater.inflate(R.layout.browse_row, parent, false)
             val item = items[position]
 
-            if (tiles) {
-                view.findViewById<TextView>(R.id.tileTitle).text = item.title
-                view.findViewById<TextView>(R.id.tileSubtitle).apply {
-                    text = item.subtitle.orEmpty()
-                    visibility = if (item.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
-                }
-                bindArtwork(view.findViewById(R.id.tileThumb), item.source)
-            } else {
-                view.findViewById<TextView>(R.id.rowTitle).apply {
-                    text = item.title
-                    // The track playing now is the one you are looking for in a queue:
-                    // it takes the accent, everything else stays plain ink.
-                    setTextColor(context.getColor(if (item.current) R.color.accent else R.color.ink))
-                }
-                view.findViewById<TextView>(R.id.rowSubtitle).apply {
-                    text = item.subtitle.orEmpty()
-                    visibility = if (item.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
-                }
-                bindArtwork(view.findViewById(R.id.rowThumb), item.source)
+            view.findViewById<TextView>(R.id.rowTitle).apply {
+                text = item.title
+                // The track playing now is the one you are looking for in a queue:
+                // it takes the accent, everything else stays plain ink.
+                setTextColor(context.getColor(if (item.current) R.color.accent else R.color.ink))
             }
+            view.findViewById<TextView>(R.id.rowSubtitle).apply {
+                text = item.subtitle.orEmpty()
+                visibility = if (item.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
+            }
+            bindArtwork(view.findViewById(R.id.rowThumb), item.source)
+
             // Only on the way in: recycled rows must not re-animate while scrolling.
             if (position > animatedUpTo) {
                 animatedUpTo = position

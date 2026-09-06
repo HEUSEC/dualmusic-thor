@@ -104,9 +104,13 @@ class SpotifyRemote(private val context: Context) {
 
     // --- browsing -------------------------------------------------------------
 
-    fun loadRoot(onItems: (List<ListItem>) -> Unit, onError: (String) -> Unit) {
+    fun loadRoot(
+        type: String = ROOT_TYPE,
+        onItems: (List<ListItem>) -> Unit,
+        onError: (String) -> Unit,
+    ) {
         val api = remote?.contentApi ?: return onError("not connected")
-        api.getRecommendedContentItems(ROOT_TYPE)
+        api.getRecommendedContentItems(type)
             .setResultCallback { items -> onItems(items.items?.filterNotNull() ?: emptyList()) }
             .setErrorCallback { e -> onError(describe(e)) }
     }
@@ -127,9 +131,9 @@ class SpotifyRemote(private val context: Context) {
     fun loadImage(item: ListItem, onBitmap: (Bitmap) -> Unit) {
         val uri = item.imageUri ?: return
         val api = remote?.imagesApi ?: return
-        api.getImage(uri, Image.Dimension.SMALL).setResultCallback { bitmap ->
-            if (bitmap != null) onBitmap(bitmap)
-        }
+        api.getImage(uri, Image.Dimension.SMALL)
+            .setResultCallback { bitmap -> if (bitmap != null) onBitmap(bitmap) }
+            .setErrorCallback { e -> Log.w(TAG, "no image for ${item.title} (${uri.raw})", e) }
     }
 
     // --- playback -------------------------------------------------------------

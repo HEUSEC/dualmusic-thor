@@ -50,6 +50,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private var lyricsKey: String? = null
     private var lyrics: Lyrics = Lyrics.NONE
     private lateinit var browser: SpotifyBrowser
+    private lateinit var artwork: ArtworkLoader
     private var spotifyStatus: SpotifyRemote.Status = SpotifyRemote.Status.Disconnected
     private var browseState: SpotifyBrowser.State? = null
     private var askedForSpotifyConsent = false
@@ -67,8 +68,6 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         override fun run() {
             nowPlayingBinder?.updateProgress()
             controlsBinder?.updateProgress()
-            // The device stream has no callback worth registering; it is one int read.
-            pushVolume()
             handler.postDelayed(this, TICK_MS)
         }
     }
@@ -89,7 +88,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         displayManager = getSystemService(DisplayManager::class.java)
         hub = MediaHub(applicationContext)
         spotify = SpotifyRemote(this)
-        browser = SpotifyBrowser(spotify)
+        artwork = ArtworkLoader(spotify)
+        browser = SpotifyBrowser(spotify, webApi)
     }
 
     override fun onStart() {
@@ -363,8 +363,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private fun render(snapshot: MediaHub.Snapshot) {
         lastSnapshot = snapshot
         nowPlayingBinder?.bind(snapshot)
-        controlsBinder?.bind(snapshot, buildStatus(snapshot))
-        pushVolume()
+        controlsBinder?.bind(snapshot)
         requestLyrics(snapshot.track)
         nowPlayingBinder?.setLyrics(lyrics)
     }
@@ -395,17 +394,6 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         controlsBinder?.bindBrowse(browseState, spotifyStatus)
     }
 
-    /** One short line in the dock's status pill; the design gives it 11sp and one line. */
-    private fun buildStatus(snapshot: MediaHub.Snapshot): String = when {
-        !snapshot.permissionGranted -> getString(R.string.permission_needed)
-        spotifyStatus is SpotifyRemote.Status.Connected -> getString(R.string.connected)
-        spotifyStatus is SpotifyRemote.Status.Connecting -> getString(R.string.spotify_connecting)
-        spotifyStatus is SpotifyRemote.Status.Failed ->
-            (spotifyStatus as SpotifyRemote.Status.Failed).reason
-        snapshot.active != null -> snapshot.active.label
-        else -> getString(R.string.spotify_disconnected)
-    }
-
     // --- ControlsBinder.Actions ----------------------------------------------
 
     override fun onPrevious() = hub.skipPrevious()
@@ -429,42 +417,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     }
 
     /**
-     * The volume this app is allowed to move. A session that renders on the device has
-     * no volume of its own — the music stream is its volume — so that is what the slider
-     * and the volume keys act on; only a session playing elsewhere is moved through the
-     * session itself.
+     * A session playing somewhere else owns its volume, and Android's own volume keys
+     * cannot reach it; that is the only case this app intercepts them.
      */
     private fun remoteVolume(): MediaHub.Volume? =
         lastSnapshot?.volume?.takeIf { it.remote && it.adjustable }
 
-    private fun pushVolume() {
-        val remote = remoteVolume()
-        if (remote != null) {
-            controlsBinder?.setVolume(remote.current, remote.max)
-        } else {
-            controlsBinder?.setVolume(
-                audio.getStreamVolume(AudioManager.STREAM_MUSIC),
-                audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
-            )
-        }
-    }
-
-    override fun onVolumeChanged(value: Int) {
-        if (remoteVolume() != null) {
-            hub.setVolume(value)
-            return
-        }
-        try {
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
-        } catch (e: SecurityException) {
-            // Do Not Disturb makes the stream untouchable without a policy grant.
-            Log.w(TAG, "cannot set the music volume", e)
-        }
-    }
-
     override fun onSelectSession(session: MediaHub.SessionRef) = hub.selectSession(session.token)
 
-    override fun onSwapScreens() {
+    /** No button any more; the gamepad's Y is what swaps the panels. */
+    private fun onSwapScreens() {
         DisplayRouter.setSwapped(this, !DisplayRouter.isSwapped(this))
         applyPlan()
     }
@@ -525,25 +487,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     }
 
     override fun loadArtwork(item: ListItem, onBitmap: (android.graphics.Bitmap) -> Unit) =
-        spotify.loadImage(item, onBitmap)
-
-    override fun onBrowseBack() {
-        browser.back()
-    }
+        artwork.load(item, onBitmap)
 
     /**
-     * Apple Music refuses third-party browse clients (its MediaBrowserService returns
-     * no root for us), and starting playback from outside needs the MusicKit SDK and a
-     * paid developer token. Until then the honest thing is to hand the user over to it;
-     * once something is playing, MediaSession gives us full control of it.
+     * The arrow in the header is the same key as the system's back: it closes search,
+     * then the queue, then reading mode, then walks up the tree. Wiring it to the browse
+     * stack alone was why it so often looked broken — in search or lyrics it had nothing
+     * to do.
      */
-    override fun onOpenAppleMusic() {
-        val intent = packageManager.getLaunchIntentForPackage("com.apple.android.music")
-        if (intent == null) {
-            Toast.makeText(this, R.string.apple_music_missing, Toast.LENGTH_SHORT).show()
-            return
-        }
-        startActivity(intent)
+    override fun onBrowseBack() {
+        handleBack()
     }
 
     override fun onGrantAccess() {

@@ -20,7 +20,7 @@ The three sources are not equal, and the difference is imposed from outside:
 
 | Source | Browse & start playback | Control what plays | How |
 |---|---|---|---|
-| Spotify | yes (Premium) | yes | App Remote SDK + `ContentApi` |
+| Spotify | yes (Premium) | yes | App Remote SDK, `ContentApi` + Web API library |
 | Apple Music | **no** | yes | MediaSession only |
 | Local MP3 | yes (planned) | yes | MediaStore + our own player |
 
@@ -39,6 +39,18 @@ and therefore a paid Apple Developer Program membership; that SDK is also stale 
 generated 2019, still hand-downloaded AARs). Decision: **Apple Music stays a remote
 control** — transport, metadata and artwork through MediaSession, plus a button that
 hands the user over to the app to start something.
+
+**But `ContentApi` is not your library.** `getRecommendedContentItems` returns Spotify's
+editorial sections and nothing else, whichever root type is asked for: `default`,
+`navigation` and `automotive` were all run against the account on the device and all
+answered with the same thirty rows — "Buonasera", "Stazioni consigliate", "Creato per
+HEUSEC". There is no node for saved tracks and none for the user's own playlists, and
+every one of those rows carries an *empty* image id, which is why they had no covers.
+So the root of the browse tree is the library from the Web API — `/me/playlists`,
+`/me/tracks`, `/playlists/{id}/tracks` — and Spotify's recommendations are one row
+inside it rather than the whole screen. Their covers are ordinary https URLs, fetched
+directly, while App Remote rows keep going through `ImagesApi`; `ArtworkLoader` is the
+one place that knows the difference.
 
 **Spotify collaborates.** App Remote drives the installed Spotify app: `ContentApi`
 gives the same browse tree Spotify exposes to car head units (no separate OAuth token
@@ -148,11 +160,16 @@ adb shell cmd notification allow_listener com.dualmusic.thor/com.dualmusic.thor.
   Music, which gives us nothing else. Spotify publishes an empty queue
   (`queueTitle=, size=0` in `dumpsys media_session`), so with Spotify the button simply
   is not there.
-- **Volume follows where the sound is.** A session rendering on the device has no volume
-  of its own — `volumeType=1, max=0` — so the slider and the volume keys move the music
-  stream through `AudioManager`; only a session playing elsewhere is moved through
-  `setVolumeTo`. The keys are left to the system in the local case rather than
-  reimplemented.
+- **The dock holds only what the far panel cannot.** The cover, the title and the artist
+  are already on the other screen, so the control panel keeps the clock, the seek bar and
+  the transport, and nothing else: no volume slider, no status line, no swap or Apple
+  Music buttons. It had grown to nearly half the small panel, which is the half the list
+  needed. The volume keys own the volume — a locally rendered session has none of its own
+  (`volumeType=1, max=0`), so only a session playing elsewhere is intercepted — and the
+  gamepad Y swaps the panels.
+- **One density in the list.** Two column-widths and two row layouts were a design idea,
+  not a reading aid, on a panel this size: every level is now one column of 62dp rows
+  with a 44dp cover.
 - **Shuffle and repeat are not in the platform API at all.** Not on `PlaybackState`, not
   on `MediaController`, not on `TransportControls` — they exist only in
   `MediaSessionCompat`, and from a token obtained through `getActiveSessions()` the
@@ -188,15 +205,17 @@ Against a live Spotify session (Softcore / The Neighbourhood):
 - Both panels render on their displays, no crash; clean empty state when nothing plays.
 - Swap works in both directions, driven by touch on the secondary display.
 
-The controls added on top of that, on the same device:
+The library and the controls, on the same device:
 
 - The volume slider moves the music stream, and reads back what the system reports.
 - `BUTTON_A` toggles playback (`state=2 -> 3`), `R2`/`L2` seek by ten seconds
   (`67.8s -> 85.8s -> 76.9s`), `L1`/`R1` skip; the D-pad is left to the list.
 - Lyrics land in `cache/lyrics` as `synced` plus the LRC, one file per song.
-- The queue button stays hidden against Spotify, which is the correct answer to a
-  session that publishes no queue; the path itself is untested against a player that
-  publishes one.
+- The root lists 40 rows — Liked Songs, 38 playlists, Made by Spotify — with their real
+  covers over https, and tapping a track in Liked Songs starts it (`spotify:track:…`
+  through `playUri`, since a Web API row is not a node App Remote can resolve).
+- The queue button appears once Spotify publishes a queue and stays hidden when it does
+  not, which at the root of the library it does not.
 
 And end to end with Spotify:
 
@@ -268,7 +287,7 @@ browse clients, and this app takes that answer and stays a remote control for it
   this repository; `build.sh` downloads the official release into `app/libs` and checks
   its SHA-256.
 - **Gson**, Apache 2.0. **androidx.browser**, Apache 2.0.
-- The two icons drawn in `res/drawable/ic_*.xml` use Material Symbols path data,
+- The queue icon in `res/drawable/ic_queue.xml` uses Material Symbols path data,
   Apache 2.0, © Google; everything else on screen is a shape drawable of our own.
 - Lyrics come from [LRCLIB](https://lrclib.net), a free open database, over its public
   API with an identifying User-Agent, and are cached so a track is asked for once.

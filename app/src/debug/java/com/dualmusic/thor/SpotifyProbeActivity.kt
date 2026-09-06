@@ -59,15 +59,24 @@ class SpotifyProbeActivity : Activity() {
     }
 
     private fun dumpRoot() {
+        val type = intent.getStringExtra("type") ?: "default"
+        Log.i(TAG, "RESULT root type = $type")
         spotify.loadRoot(
+            type = type,
             onItems = { items ->
                 Log.i(TAG, "RESULT root items = ${items.size}")
                 items.forEach { item ->
                     Log.i(
                         TAG,
                         "  playable=${item.playable} children=${item.hasChildren} " +
-                            "uri=${item.uri} title=${item.title}"
+                            "image=${item.imageUri?.raw} uri=${item.uri} title=${item.title}"
                     )
+                }
+                // Does the image actually come back? That is a separate question.
+                items.firstOrNull { it.imageUri != null }?.let { first ->
+                    spotify.loadImage(first) { bitmap ->
+                        Log.i(TAG, "RESULT image for ${first.title}: ${bitmap.width}x${bitmap.height}")
+                    }
                 }
             },
             onError = { Log.e(TAG, "RESULT root error: $it") },
