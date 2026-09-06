@@ -29,6 +29,9 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onPlayPause()
         fun onNext()
         fun onSeekTo(positionMs: Long)
+        fun onToggleQueue()
+        fun onQueueItemTapped(entry: MediaHub.QueueEntry)
+        fun onVolumeChanged(value: Int)
         fun onSelectSession(session: MediaHub.SessionRef)
         fun onSwapScreens()
         fun onGrantAccess()
@@ -54,6 +57,9 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private val btnPrev: ImageButton = root.findViewById(R.id.btnPrev)
     private val btnPlayPause: ImageButton = root.findViewById(R.id.btnPlayPause)
     private val btnNext: ImageButton = root.findViewById(R.id.btnNext)
+    private val btnQueue: ImageButton = root.findViewById(R.id.btnQueue)
+    private val volumeRow: View = root.findViewById(R.id.volumeRow)
+    private val volumeSeek: SeekBar = root.findViewById(R.id.volumeSeek)
     private val btnAppleMusic: TextView = root.findViewById(R.id.btnAppleMusic)
     private val btnSwap: TextView = root.findViewById(R.id.btnSwap)
 
@@ -81,6 +87,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private val adapter = BrowseAdapter(LayoutInflater.from(root.context), actions)
     private var readingMode = false
     private var searchMode = false
+    private var queueMode = false
+    private var userChangingVolume = false
     private var trackKey: String? = null
     private var lastBrowseState: SpotifyBrowser.State? = null
     private var lastSpotifyStatus: SpotifyRemote.Status = SpotifyRemote.Status.Disconnected
@@ -94,6 +102,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnPrev.setOnClickListener { actions.onPrevious() }
         btnPlayPause.setOnClickListener { actions.onPlayPause() }
         btnNext.setOnClickListener { actions.onNext() }
+        btnQueue.setOnClickListener { actions.onToggleQueue() }
         btnSwap.setOnClickListener { actions.onSwapScreens() }
         btnAppleMusic.setOnClickListener { actions.onOpenAppleMusic() }
         btnSpotify.setOnClickListener { actions.onConnectSpotify() }
@@ -114,8 +123,23 @@ class ControlsBinder(root: View, private val actions: Actions) {
 
         browseList.adapter = adapter
         browseList.setOnItemClickListener { _, _, position, _ ->
-            adapter.itemAt(position)?.let { actions.onBrowseItemTapped(it) }
+            adapter.itemAt(position)?.onTap?.invoke()
         }
+
+        volumeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
+                // Volume is the one control that should follow the finger, not the lift.
+                if (fromUser) actions.onVolumeChanged(value)
+            }
+
+            override fun onStartTrackingTouch(bar: SeekBar) {
+                userChangingVolume = true
+            }
+
+            override fun onStopTrackingTouch(bar: SeekBar) {
+                userChangingVolume = false
+            }
+        })
 
         nearSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
@@ -180,6 +204,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         nearSeek.isEnabled = seekable
         nearSeek.alpha = if (seekable) 1f else 0.4f
 
+        bindQueueButton(snapshot)
+
         if (songChanged) {
             // refresh, not appear: the dock's thumb and title are hidden while reading.
             Motion.refresh(nearThumb, Motion.NORMAL)
@@ -193,9 +219,65 @@ class ControlsBinder(root: View, private val actions: Actions) {
     }
 
     /**
-     * Reading mode: the lyrics go full screen on the far panel, and this one becomes
-     * the record — big cover, title, and the transport that never moved.
+     * The queue button. It is there only when the player publishes a queue: a button
+     * that opens an empty list is not a feature, it is a dead end.
      */
+    private fun bindQueueButton(snapshot: MediaHub.Snapshot) {
+        val hasQueue = snapshot.queue.isNotEmpty()
+        btnQueue.visibility = if (hasQueue) View.VISIBLE else View.GONE
+        btnQueue.imageTintList = tint(if (queueMode) R.color.accent else R.color.ink)
+        // The queue can go away under us — the player stops, or hands out an empty one.
+        if (queueMode) {
+            if (hasQueue) showQueue(snapshot.queue, snapshot.queueTitle) else actions.onToggleQueue()
+        }
+    }
+
+    private fun tint(colorRes: Int) =
+        android.content.res.ColorStateList.valueOf(btnQueue.context.getColor(colorRes))
+
+    /**
+     * The volume the panel is allowed to move: the device music stream while the player
+     * renders locally, the session's own volume when it plays somewhere else. [max] of
+     * zero means neither exists, and the row goes away.
+     */
+    fun setVolume(current: Int, max: Int) {
+        volumeRow.visibility = if (max > 0 && !readingMode) View.VISIBLE else View.GONE
+        if (max <= 0 || userChangingVolume) return
+        if (volumeSeek.max != max) volumeSeek.max = max
+        if (volumeSeek.progress != current) volumeSeek.progress = current
+    }
+
+    /** The player's own queue, in place of the browse tree. */
+    fun setQueueMode(enabled: Boolean) {
+        queueMode = enabled
+        btnQueue.imageTintList = tint(if (enabled) R.color.accent else R.color.ink)
+        if (!enabled) bindBrowse(lastBrowseState, lastSpotifyStatus)
+    }
+
+    private fun showQueue(entries: List<MediaHub.QueueEntry>, title: String?) {
+        adapter.setTiles(false)
+        browseList.numColumns = 1
+        adapter.submit(
+            entries.map { entry ->
+                BrowseAdapter.Row(
+                    title = entry.title,
+                    subtitle = entry.subtitle,
+                    source = null,
+                    current = entry.isCurrent,
+                    onTap = { actions.onQueueItemTapped(entry) },
+                )
+            }
+        )
+        browseTitle.text = title ?: browseTitle.context.getString(R.string.queue_title)
+        browseCrumb.visibility = View.GONE
+        btnSpotify.visibility = View.GONE
+        browseMessage.visibility = View.GONE
+        browseAction.visibility = View.GONE
+        browseList.visibility = View.VISIBLE
+        btnBrowseBack.isEnabled = true
+        btnBrowseBack.alpha = 1f
+    }
+
     /** Swaps the header's title for a query field and asks for the keyboard. */
     fun setSearchMode(enabled: Boolean) {
         searchMode = enabled
@@ -219,11 +301,22 @@ class ControlsBinder(root: View, private val actions: Actions) {
         }
     }
 
+    /** Browse items and search hits are the same kind of row: tap to open or play. */
+    private fun rowsOf(items: List<ListItem>): List<BrowseAdapter.Row> = items.map { item ->
+        BrowseAdapter.Row(
+            title = item.title.orEmpty(),
+            subtitle = item.subtitle,
+            source = item,
+            current = false,
+            onTap = { actions.onBrowseItemTapped(item) },
+        )
+    }
+
     fun showSearchResults(items: List<ListItem>) {
         if (!searchMode) return
         adapter.setTiles(false)
         browseList.numColumns = 1
-        adapter.submit(items)
+        adapter.submit(rowsOf(items))
         val empty = items.isEmpty()
         browseMessage.text = browseMessage.context.getString(R.string.search_empty)
         browseMessage.visibility = if (empty) View.VISIBLE else View.GONE
@@ -249,6 +342,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         // Swap and Apple Music are not what you reach for mid-song; that band is
         // 48dp the cover can have instead.
         statusBand.visibility = if (enabled) View.GONE else View.VISIBLE
+        // Same trade as the status band: mid-song the cover is worth more than a slider.
+        if (enabled) volumeRow.visibility = View.GONE
         bindBrowse(lastBrowseState, lastSpotifyStatus)
     }
 
@@ -306,7 +401,9 @@ class ControlsBinder(root: View, private val actions: Actions) {
     fun bindBrowse(state: SpotifyBrowser.State?, spotify: SpotifyRemote.Status) {
         lastBrowseState = state
         lastSpotifyStatus = spotify
-        if (searchMode) return
+        // Search and the queue borrow the same list; neither may be painted over by a
+        // browse update arriving underneath them.
+        if (searchMode || queueMode) return
         val context = browseMessage.context
         val connected = spotify is SpotifyRemote.Status.Connected
 
@@ -368,7 +465,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
             state.items.isEmpty() -> context.getString(R.string.spotify_empty)
             else -> null
         }
-        adapter.submit(if (message == null && state != null) state.items else emptyList())
+        adapter.submit(if (message == null && state != null) rowsOf(state.items) else emptyList())
         browseMessage.text = message.orEmpty()
         browseMessage.visibility = if (message == null) View.GONE else View.VISIBLE
         browseList.visibility = if (message == null) View.VISIBLE else View.GONE
@@ -405,12 +502,24 @@ class ControlsBinder(root: View, private val actions: Actions) {
         private val actions: Actions,
     ) : BaseAdapter() {
 
-        private var items: List<ListItem> = emptyList()
+        /**
+         * What a row is, whichever list is showing. A browse item keeps its [source] so
+         * its cover can be fetched; a queue entry has none and simply has no thumbnail.
+         */
+        data class Row(
+            val title: String,
+            val subtitle: String?,
+            val source: ListItem?,
+            val current: Boolean,
+            val onTap: () -> Unit,
+        )
+
+        private var items: List<Row> = emptyList()
         private var tiles = true
 
         private var animatedUpTo = -1
 
-        fun submit(newItems: List<ListItem>) {
+        fun submit(newItems: List<Row>) {
             items = newItems
             animatedUpTo = -1
             notifyDataSetChanged()
@@ -422,7 +531,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
             notifyDataSetChanged()
         }
 
-        fun itemAt(position: Int): ListItem? = items.getOrNull(position)
+        fun itemAt(position: Int): Row? = items.getOrNull(position)
 
         override fun getCount(): Int = items.size
 
@@ -434,10 +543,11 @@ class ControlsBinder(root: View, private val actions: Actions) {
          * Rows are recycled, so a slow image must land on the row it was asked for:
          * the uri is stamped on the view and checked when the bitmap comes back.
          */
-        private fun bindArtwork(target: ImageView, item: ListItem) {
+        private fun bindArtwork(target: ImageView, item: ListItem?) {
             target.setImageDrawable(null)
-            // Editorial sections carry no image; an empty grey square is not information.
-            if (item.imageUri == null) {
+            // Editorial sections and queue entries carry no image; an empty grey square
+            // is not information.
+            if (item?.imageUri == null) {
                 target.visibility = View.GONE
                 return
             }
@@ -458,19 +568,24 @@ class ControlsBinder(root: View, private val actions: Actions) {
             val item = items[position]
 
             if (tiles) {
-                view.findViewById<TextView>(R.id.tileTitle).text = item.title.orEmpty()
+                view.findViewById<TextView>(R.id.tileTitle).text = item.title
                 view.findViewById<TextView>(R.id.tileSubtitle).apply {
                     text = item.subtitle.orEmpty()
                     visibility = if (item.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
                 }
-                bindArtwork(view.findViewById(R.id.tileThumb), item)
+                bindArtwork(view.findViewById(R.id.tileThumb), item.source)
             } else {
-                view.findViewById<TextView>(R.id.rowTitle).text = item.title.orEmpty()
+                view.findViewById<TextView>(R.id.rowTitle).apply {
+                    text = item.title
+                    // The track playing now is the one you are looking for in a queue:
+                    // it takes the accent, everything else stays plain ink.
+                    setTextColor(context.getColor(if (item.current) R.color.accent else R.color.ink))
+                }
                 view.findViewById<TextView>(R.id.rowSubtitle).apply {
                     text = item.subtitle.orEmpty()
                     visibility = if (item.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
                 }
-                bindArtwork(view.findViewById(R.id.rowThumb), item)
+                bindArtwork(view.findViewById(R.id.rowThumb), item.source)
             }
             // Only on the way in: recycled rows must not re-animate while scrolling.
             if (position > animatedUpTo) {

@@ -4,6 +4,7 @@ import android.app.Presentation
 import android.content.Context
 import android.os.Bundle
 import android.view.Display
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 
@@ -31,9 +32,19 @@ class PanelPresentation(
      */
     var onBack: (() -> Unit)? = null
 
+    /**
+     * The same for the hardware buttons: whichever panel has focus, the Thor's gamepad
+     * has to reach the one place that knows what is playing. Returns true when the host
+     * used the key.
+     */
+    var onKey: ((Int, KeyEvent) -> Boolean)? = null
+
     fun doOnInflated(block: (View) -> Unit) {
         panel?.let(block) ?: run { onInflated = block }
     }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
+        onKey?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {

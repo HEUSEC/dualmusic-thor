@@ -97,6 +97,19 @@
                 android:padding="11dp"
                 android:contentDescription="@string/search" />
 
+            <ImageButton
+                android:id="@+id/btnQueue"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_queue"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:contentDescription="@string/queue" />
+
             <TextView
                 android:id="@+id/btnSpotify"
                 android:stateListAnimator="@animator/press_scale"
@@ -374,6 +387,7 @@
                 android:layout_marginTop="6dp"
                 android:orientation="horizontal">
 
+
                 <ImageButton
                     android:id="@+id/btnPrev"
                 android:stateListAnimator="@animator/press_scale"
@@ -412,6 +426,38 @@
                     android:scaleType="fitCenter"
                     android:padding="14dp"
                     android:contentDescription="@string/next" />
+
+            </LinearLayout>
+
+            <!-- Volume: the device stream while the player renders locally, the session's
+                 own volume when it is playing somewhere else. -->
+            <LinearLayout
+                android:id="@+id/volumeRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView
+                    android:id="@+id/volumeIcon"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_volume"
+                    android:tint="@color/ink_soft"
+                    android:contentDescription="@string/volume" />
+
+                <SeekBar
+                    android:id="@+id/volumeSeek"
+                    android:layout_width="0dp"
+                    android:layout_height="21dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:progressDrawable="@drawable/progress_accent"
+                    android:thumb="@drawable/seek_thumb"
+                    android:splitTrack="false"
+                    android:minHeight="6dp"
+                    android:maxHeight="6dp" />
             </LinearLayout>
 
             <!-- Status band: fixed 48dp so planned controls can move in without

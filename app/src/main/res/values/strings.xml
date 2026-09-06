@@ -15,6 +15,11 @@
     <string name="play_pause">Play / pause</string>
     <string name="next">Next</string>
 
+    <string name="queue">Queue</string>
+    <string name="volume">Volume</string>
+    <string name="queue_title">Up next</string>
+    <string name="queue_empty">This player publishes no queue</string>
+
     <string name="swap_screens">Swap</string>
     <string name="next_session">Next app</string>
     <string name="single_screen">Single screen</string>

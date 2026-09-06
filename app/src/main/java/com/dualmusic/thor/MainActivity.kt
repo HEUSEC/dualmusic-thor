@@ -3,11 +3,13 @@ package com.dualmusic.thor
 import android.app.Activity
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
@@ -29,6 +31,9 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     companion object {
         private const val TAG = "MainActivity"
         private const val TICK_MS = 120L
+
+        /** One shoulder-trigger press is worth about a chorus. */
+        private const val NUDGE_MS = 10_000L
     }
 
     private lateinit var hub: MediaHub
@@ -36,9 +41,12 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private lateinit var hostContainer: LinearLayout
 
     private lateinit var spotify: SpotifyRemote
-    private val lyricsRepository = LyricsRepository()
+    // Cached under cacheDir: the system may reclaim it, and losing lyrics costs a lookup.
+    private val lyricsRepository by lazy { LyricsRepository(java.io.File(cacheDir, "lyrics")) }
     private val webApi by lazy { SpotifyWebApi(this) }
+    private val audio by lazy { getSystemService(AudioManager::class.java) }
     private var searchMode = false
+    private var queueMode = false
     private var lyricsKey: String? = null
     private var lyrics: Lyrics = Lyrics.NONE
     private lateinit var browser: SpotifyBrowser
@@ -59,6 +67,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         override fun run() {
             nowPlayingBinder?.updateProgress()
             controlsBinder?.updateProgress()
+            // The device stream has no callback worth registering; it is one int read.
+            pushVolume()
             handler.postDelayed(this, TICK_MS)
         }
     }
@@ -181,11 +191,78 @@ class MainActivity : Activity(), ControlsBinder.Actions {
      */
     private fun handleBack(): Boolean {
         if (closeSearch()) return true
+        if (queueMode) {
+            setQueueMode(false)
+            return true
+        }
         if (lyricsMode) {
             setLyricsMode(false)
             return true
         }
         return browser.back()
+    }
+
+    // --- hardware buttons -----------------------------------------------------
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
+        handleKey(keyCode, event) || super.onKeyDown(keyCode, event)
+
+    /**
+     * The Thor is a handheld with a gamepad, so the music should be playable without
+     * looking at either screen. Face buttons act, shoulders move through the track, and
+     * the D-pad is left alone: the browse list needs it to move its own selection.
+     *
+     * Both panels route here — the Activity through [onKeyDown], the Presentation
+     * through its own — because only this class knows which session is being followed.
+     */
+    private fun handleKey(keyCode: Int, event: KeyEvent): Boolean {
+        val track = lastSnapshot?.track
+        when (keyCode) {
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_PLAY,
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> hub.togglePlayPause()
+
+            KeyEvent.KEYCODE_BUTTON_B -> if (!handleBack()) return false
+
+            KeyEvent.KEYCODE_BUTTON_X -> onToggleLyrics()
+
+            KeyEvent.KEYCODE_BUTTON_Y -> onSwapScreens()
+
+            KeyEvent.KEYCODE_BUTTON_L1,
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> hub.skipPrevious()
+
+            KeyEvent.KEYCODE_BUTTON_R1,
+            KeyEvent.KEYCODE_MEDIA_NEXT -> hub.skipNext()
+
+            // Held triggers keep nudging: the repeats are the point, not an accident.
+            KeyEvent.KEYCODE_BUTTON_L2 -> nudge(-NUDGE_MS)
+            KeyEvent.KEYCODE_BUTTON_R2 -> nudge(NUDGE_MS)
+
+            KeyEvent.KEYCODE_BUTTON_SELECT -> hub.cycleSession()
+
+            // The volume keys belong to the system unless the session owns its own
+            // volume, which is the one case Android's own handling cannot reach.
+            KeyEvent.KEYCODE_VOLUME_UP -> return stepRemoteVolume(AudioManager.ADJUST_RAISE)
+            KeyEvent.KEYCODE_VOLUME_DOWN -> return stepRemoteVolume(AudioManager.ADJUST_LOWER)
+
+            else -> return false
+        }
+        // A key that acted on nothing must not look as if it did.
+        return track != null || keyCode == KeyEvent.KEYCODE_BUTTON_B ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_Y
+    }
+
+    private fun nudge(deltaMs: Long) {
+        val track = lastSnapshot?.track ?: return
+        val target = (track.positionNowMs() + deltaMs).coerceAtLeast(0L)
+        hub.seekTo(if (track.durationMs > 0L) target.coerceAtMost(track.durationMs) else target)
+    }
+
+    private fun stepRemoteVolume(direction: Int): Boolean {
+        if (remoteVolume() == null) return false
+        hub.adjustVolume(direction)
+        return true
     }
 
     // --- panel placement ------------------------------------------------------
@@ -204,7 +281,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
             // Single screen: stack both panels in this window.
             nowPlayingBinder =
                 NowPlayingBinder(addToHost(R.layout.now_playing, weight = 1f)) { hub.seekTo(it) }
-            controlsBinder = ControlsBinder(addToHost(R.layout.controls, weight = 1f), this)
+            controlsBinder = makeControls(addToHost(R.layout.controls, weight = 1f))
         } else {
             val activityLayout =
                 if (plan.controlsOnPresentation) R.layout.now_playing else R.layout.controls
@@ -222,7 +299,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
                 hostContainer.removeAllViews()
                 nowPlayingBinder =
                 NowPlayingBinder(addToHost(R.layout.now_playing, weight = 1f)) { hub.seekTo(it) }
-                controlsBinder = ControlsBinder(addToHost(R.layout.controls, weight = 1f), this)
+                controlsBinder = makeControls(addToHost(R.layout.controls, weight = 1f))
                 plan = plan.copy(presentationDisplayId = null)
             }
         }
@@ -235,6 +312,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private fun showPresentation(display: android.view.Display, layoutRes: Int): Boolean = try {
         val p = PanelPresentation(this, display, layoutRes)
         p.onBack = { handleBack() }
+        p.onKey = { code, event -> handleKey(code, event) }
         p.doOnInflated { view -> bindPanel(layoutRes, view) }
         p.show()
         p.window?.let { goEdgeToEdge(it) }
@@ -246,9 +324,15 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         false
     }
 
+    /** A fresh controls panel always starts in whatever mode the app is already in. */
+    private fun makeControls(view: View) = ControlsBinder(view, this).also {
+        it.setReadingMode(lyricsMode)
+        it.setQueueMode(queueMode)
+    }
+
     private fun bindPanel(layoutRes: Int, view: View) {
         if (layoutRes == R.layout.controls) {
-            controlsBinder = ControlsBinder(view, this).also { it.setReadingMode(lyricsMode) }
+            controlsBinder = makeControls(view)
         } else {
             nowPlayingBinder = NowPlayingBinder(view) { hub.seekTo(it) }.also {
                 it.setLyrics(lyrics)
@@ -280,6 +364,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         lastSnapshot = snapshot
         nowPlayingBinder?.bind(snapshot)
         controlsBinder?.bind(snapshot, buildStatus(snapshot))
+        pushVolume()
         requestLyrics(snapshot.track)
         nowPlayingBinder?.setLyrics(lyrics)
     }
@@ -330,6 +415,52 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     override fun onNext() = hub.skipNext()
 
     override fun onSeekTo(positionMs: Long) = hub.seekTo(positionMs)
+
+    override fun onToggleQueue() = setQueueMode(!queueMode)
+
+    override fun onQueueItemTapped(entry: MediaHub.QueueEntry) = hub.playQueueItem(entry.id)
+
+    private fun setQueueMode(enabled: Boolean) {
+        if (enabled) closeSearch()
+        queueMode = enabled
+        controlsBinder?.setQueueMode(enabled)
+        // The queue itself lives in the snapshot, so the list fills in on the repaint.
+        lastSnapshot?.let { render(it) }
+    }
+
+    /**
+     * The volume this app is allowed to move. A session that renders on the device has
+     * no volume of its own — the music stream is its volume — so that is what the slider
+     * and the volume keys act on; only a session playing elsewhere is moved through the
+     * session itself.
+     */
+    private fun remoteVolume(): MediaHub.Volume? =
+        lastSnapshot?.volume?.takeIf { it.remote && it.adjustable }
+
+    private fun pushVolume() {
+        val remote = remoteVolume()
+        if (remote != null) {
+            controlsBinder?.setVolume(remote.current, remote.max)
+        } else {
+            controlsBinder?.setVolume(
+                audio.getStreamVolume(AudioManager.STREAM_MUSIC),
+                audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+            )
+        }
+    }
+
+    override fun onVolumeChanged(value: Int) {
+        if (remoteVolume() != null) {
+            hub.setVolume(value)
+            return
+        }
+        try {
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
+        } catch (e: SecurityException) {
+            // Do Not Disturb makes the stream untouchable without a policy grant.
+            Log.w(TAG, "cannot set the music volume", e)
+        }
+    }
 
     override fun onSelectSession(session: MediaHub.SessionRef) = hub.selectSession(session.token)
 

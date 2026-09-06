@@ -23,6 +23,9 @@ class MediaHub(private val context: Context) {
 
     companion object {
         private const val TAG = "MediaHub"
+
+        /** A queue is something to glance at; past this it is a library, not a list. */
+        private const val MAX_QUEUE = 60
     }
 
     fun interface Listener {
@@ -34,6 +37,27 @@ class MediaHub(private val context: Context) {
         val packageName: String,
         val label: String,
         val isPlaying: Boolean,
+    )
+
+    /** One entry of the player's own queue, as it publishes it. */
+    data class QueueEntry(
+        val id: Long,
+        val title: String,
+        val subtitle: String?,
+        val isCurrent: Boolean,
+    )
+
+    /**
+     * The player's volume, when it publishes one. [remote] tells the two cases apart:
+     * a player rendering locally is asking the device stream to move, so we leave that
+     * to the volume keys; a remote one (a cast target, another endpoint) can only be
+     * moved through its session.
+     */
+    data class Volume(
+        val current: Int,
+        val max: Int,
+        val remote: Boolean,
+        val adjustable: Boolean,
     )
 
     data class Track(
@@ -72,6 +96,9 @@ class MediaHub(private val context: Context) {
         val sessions: List<SessionRef>,
         val active: SessionRef?,
         val track: Track?,
+        val queue: List<QueueEntry> = emptyList(),
+        val queueTitle: String? = null,
+        val volume: Volume? = null,
     )
 
     private val sessionManager: MediaSessionManager =
@@ -144,6 +171,29 @@ class MediaHub(private val context: Context) {
         activeController()?.transportControls?.seekTo(positionMs)
     }
 
+    fun playQueueItem(id: Long) {
+        activeController()?.transportControls?.skipToQueueItem(id)
+    }
+
+    /**
+     * Moves the volume by one step. A locally rendered session has no session volume to
+     * set — the device stream is the volume — so it is left alone and the volume keys
+     * do their normal job.
+     */
+    fun adjustVolume(direction: Int) {
+        val controller = activeController() ?: return
+        val info = controller.playbackInfo ?: return
+        if (info.playbackType != MediaController.PlaybackInfo.PLAYBACK_TYPE_REMOTE) return
+        controller.adjustVolume(direction, 0)
+    }
+
+    fun setVolume(value: Int) {
+        val controller = activeController() ?: return
+        val info = controller.playbackInfo ?: return
+        if (info.playbackType != MediaController.PlaybackInfo.PLAYBACK_TYPE_REMOTE) return
+        controller.setVolumeTo(value.coerceIn(0, info.maxVolume), 0)
+    }
+
     /** Explicit pick from the session switcher; pins until that session dies. */
     fun selectSession(token: MediaSession.Token) {
         if (!controllers.containsKey(token)) return
@@ -185,6 +235,14 @@ class MediaHub(private val context: Context) {
                     reselect()
                     publish()
                 }
+
+                // The queue and the volume each change on their own, with no metadata
+                // or state event to carry them.
+                override fun onQueueChanged(queue: MutableList<MediaSession.QueueItem>?) = publish()
+
+                override fun onQueueTitleChanged(title: CharSequence?) = publish()
+
+                override fun onAudioInfoChanged(info: MediaController.PlaybackInfo) = publish()
             }
             controllers[token] = controller
             callbacks[token] = callback
@@ -246,8 +304,50 @@ class MediaHub(private val context: Context) {
         }
         val refs = controllers.map { (token, controller) -> ref(token, controller) }
         val active = activeToken?.let { token -> controllers[token]?.let { ref(token, it) } }
-        val track = activeController()?.let { trackOf(it) }
-        return Snapshot(permissionGranted = true, sessions = refs, active = active, track = track)
+        val controller = activeController()
+        return Snapshot(
+            permissionGranted = true,
+            sessions = refs,
+            active = active,
+            track = controller?.let { trackOf(it) },
+            queue = controller?.let { queueOf(it) }.orEmpty(),
+            queueTitle = controller?.queueTitle?.toString()?.takeIf { it.isNotBlank() },
+            volume = controller?.let { volumeOf(it) },
+        )
+    }
+
+    /**
+     * The queue as the player publishes it, capped: this is a list to glance at and tap,
+     * and a player that hands us its whole shuffled library is not offering information.
+     * The entry playing now is marked by its queue id, which is what
+     * [PlaybackState.getActiveQueueItemId] names — matching by title would collide on a
+     * track that appears twice.
+     */
+    private fun queueOf(controller: MediaController): List<QueueEntry> {
+        val queue = controller.queue ?: return emptyList()
+        val currentId = controller.playbackState?.activeQueueItemId
+            ?: MediaSession.QueueItem.UNKNOWN_ID.toLong()
+        return queue.take(MAX_QUEUE).mapNotNull { item ->
+            val description = item.description
+            val title = description.title?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            QueueEntry(
+                id = item.queueId,
+                title = title,
+                subtitle = description.subtitle?.toString()?.takeIf { it.isNotBlank() },
+                isCurrent = item.queueId == currentId,
+            )
+        }
+    }
+
+    private fun volumeOf(controller: MediaController): Volume? {
+        val info = controller.playbackInfo ?: return null
+        if (info.maxVolume <= 0) return null
+        return Volume(
+            current = info.currentVolume,
+            max = info.maxVolume,
+            remote = info.playbackType == MediaController.PlaybackInfo.PLAYBACK_TYPE_REMOTE,
+            adjustable = info.volumeControl != android.media.VolumeProvider.VOLUME_CONTROL_FIXED,
+        )
     }
 
     private fun ref(token: MediaSession.Token, controller: MediaController) = SessionRef(

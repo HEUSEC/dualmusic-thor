@@ -142,6 +142,26 @@ adb shell cmd notification allow_listener com.dualmusic.thor/com.dualmusic.thor.
 - **Edge to edge.** Both windows hide the system bars, so the mint ground runs to the
   panel edges as the canvas draws it.
 
+- **Queue, volume and the gamepad are the session API's, not Spotify's.** The queue
+  button appears only when the player publishes one (`MediaController.getQueue()`), and
+  tapping a row is `skipToQueueItem`, so it works for any player — including Apple
+  Music, which gives us nothing else. Spotify publishes an empty queue
+  (`queueTitle=, size=0` in `dumpsys media_session`), so with Spotify the button simply
+  is not there.
+- **Volume follows where the sound is.** A session rendering on the device has no volume
+  of its own — `volumeType=1, max=0` — so the slider and the volume keys move the music
+  stream through `AudioManager`; only a session playing elsewhere is moved through
+  `setVolumeTo`. The keys are left to the system in the local case rather than
+  reimplemented.
+- **Shuffle and repeat are not in the platform API at all.** Not on `PlaybackState`, not
+  on `MediaController`, not on `TransportControls` — they exist only in
+  `MediaSessionCompat`, and from a token obtained through `getActiveSessions()` the
+  compat layer can send `setRepeatMode` but never read the mode back. A switch that
+  cannot show its own state is worse than no switch, so there is none.
+- **Lyrics survive a restart.** Each lookup is written to `cacheDir/lyrics` as its kind
+  and its raw LRC, so the same song costs LRCLIB nothing twice. Misses are cached too,
+  but expire after a week: a song missing today may be added next month.
+
 - **Position is interpolated, never polled.** `PlaybackState` gives a position at an
   instant plus a speed; `MediaHub.Track.positionNowMs()` extrapolates and a 250 ms
   ticker repaints only the progress row.
@@ -168,6 +188,16 @@ Against a live Spotify session (Softcore / The Neighbourhood):
 - Both panels render on their displays, no crash; clean empty state when nothing plays.
 - Swap works in both directions, driven by touch on the secondary display.
 
+The controls added on top of that, on the same device:
+
+- The volume slider moves the music stream, and reads back what the system reports.
+- `BUTTON_A` toggles playback (`state=2 -> 3`), `R2`/`L2` seek by ten seconds
+  (`67.8s -> 85.8s -> 76.9s`), `L1`/`R1` skip; the D-pad is left to the list.
+- Lyrics land in `cache/lyrics` as `synced` plus the LRC, one file per song.
+- The queue button stays hidden against Spotify, which is the correct answer to a
+  session that publishes no queue; the path itself is untested against a player that
+  publishes one.
+
 And end to end with Spotify:
 
 - Consent completes, App Remote connects, `canPlayOnDemand=true` (Premium).
@@ -179,13 +209,12 @@ And end to end with Spotify:
 
 ## Next
 
-1. Queue, shuffle and repeat, volume — all four live on `MediaController` and none of
-   them is read yet, and they are the only controls that also work for Apple Music.
-2. The Thor's physical buttons: nothing handles `onKeyDown` today, so the gamepad and
-   the volume rocker do nothing for a music player on a handheld.
-3. Lyrics cached on disk. `LyricsRepository` caches per session, so every restart asks
-   LRCLIB for tracks it has already looked up.
-4. Local MP3 source: MediaStore + ID3 + our own `MediaSession`.
+1. Local MP3 source: MediaStore + ID3 + our own `MediaSession`. It is also the only way
+   to get a queue this app controls, since Spotify publishes none.
+2. Colour from the artwork: tint the shell with the cover's own hue instead of the fixed
+   mint, which is what the design notes already promise.
+3. Ambient mode on the big panel once nothing has played for a while, with a pixel shift
+   — two panels stay lit for hours on a handheld.
 
 ## Toolchain on this machine
 
@@ -239,6 +268,8 @@ browse clients, and this app takes that answer and stays a remote control for it
   this repository; `build.sh` downloads the official release into `app/libs` and checks
   its SHA-256.
 - **Gson**, Apache 2.0. **androidx.browser**, Apache 2.0.
+- The two icons drawn in `res/drawable/ic_*.xml` use Material Symbols path data,
+  Apache 2.0, © Google; everything else on screen is a shape drawable of our own.
 - Lyrics come from [LRCLIB](https://lrclib.net), a free open database, over its public
   API with an identifying User-Agent, and are cached so a track is asked for once.
 
