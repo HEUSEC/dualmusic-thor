@@ -92,10 +92,16 @@ class SpotifyWebApi(private val context: Context) {
         }
     }
 
+    /**
+     * A playlist's contents. Note the endpoint is `/items`, not `/tracks`: the older
+     * path answers 403 Forbidden for this token while `/playlists/{id}` itself answers
+     * 200, and the paging object the playlist carries points at `/items` — measured
+     * against the live API, not read in the docs.
+     */
     fun playlistTracks(uri: String, onResults: (List<ListItem>) -> Unit, onError: (String) -> Unit) {
         val id = uri.substringAfterLast(':')
         deliver(onResults, onError) { token ->
-            val json = getJson("$BASE/playlists/$id/tracks?limit=$PAGE", token)
+            val json = getJson("$BASE/playlists/$id/items?limit=$PAGE", token)
             tracksOf(json?.optJSONArray("items"), wrapped = true)
         }
     }
@@ -154,15 +160,20 @@ class SpotifyWebApi(private val context: Context) {
     }
 
     /**
-     * `/me/tracks` and playlist tracks wrap each entry in `{ "track": … }`; search
-     * returns the track objects directly.
+     * Saved tracks and playlist entries wrap the track in an envelope; search returns
+     * the track objects directly. The envelope key differs by endpoint — `/me/tracks`
+     * says `track`, a playlist's `/items` says `item` — so both are accepted.
      */
     private fun tracksOf(items: JSONArray?, wrapped: Boolean): List<ListItem> {
         if (items == null) return emptyList()
         val result = mutableListOf<ListItem>()
         for (i in 0 until items.length()) {
             val entry = items.optJSONObject(i) ?: continue
-            val track = (if (wrapped) entry.optJSONObject("track") else entry) ?: continue
+            val track = if (wrapped) {
+                entry.optJSONObject("item") ?: entry.optJSONObject("track") ?: continue
+            } else {
+                entry
+            }
             val uri = track.optString("uri").takeIf { it.isNotBlank() } ?: continue
             val artists = track.optJSONArray("artists")
             val names = (0 until (artists?.length() ?: 0))

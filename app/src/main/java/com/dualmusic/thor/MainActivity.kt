@@ -409,7 +409,12 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     override fun onQueueItemTapped(entry: MediaHub.QueueEntry) = hub.playQueueItem(entry.id)
 
     private fun setQueueMode(enabled: Boolean) {
-        if (enabled) closeSearch()
+        if (enabled) {
+            closeSearch()
+            // The queue draws in the area reading mode has taken over, so one of them
+            // has to give way; the one just asked for wins.
+            if (lyricsMode) setLyricsMode(false)
+        }
         queueMode = enabled
         controlsBinder?.setQueueMode(enabled)
         // The queue itself lives in the snapshot, so the list fills in on the repaint.
@@ -476,6 +481,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     }
 
     private fun setLyricsMode(enabled: Boolean) {
+        if (enabled && queueMode) setQueueMode(false)
         lyricsMode = enabled
         controlsBinder?.setReadingMode(enabled)
         nowPlayingBinder?.setReadingMode(enabled)

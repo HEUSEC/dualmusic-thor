@@ -141,13 +141,34 @@ class SpotifyBrowser(
                 remote.loadRoot(onItems = onItems, onError = onError)
 
             // A playlist's own tracks are richer over the Web API — real titles, real
-            // covers — than the same node walked through ContentApi.
+            // covers — but only the user's own: Spotify answers 403 for a playlist
+            // owned by anybody else, measured across a dozen of them, every one the
+            // user follows rather than owns. App Remote has no such rule, so it takes
+            // over rather than the row leading nowhere.
             library != null && item.uri.startsWith("spotify:playlist:") ->
-                library.playlistTracks(item.uri, onItems, onError)
+                library.playlistTracks(item.uri, onItems) { reason ->
+                    Log.i(TAG, "web api refused ${item.title} ($reason); asking App Remote")
+                    remote.loadChildren(asContentItem(item), 0, onItems, onError)
+                }
 
             else -> remote.loadChildren(item, 0, onItems, onError)
         }
     }
+
+    /**
+     * The same playlist as ContentApi wants it. Rows built from the Web API carry the
+     * bare playlist id, while App Remote addresses its tree by uri, so the id is
+     * restated before handing the item over.
+     */
+    private fun asContentItem(item: ListItem) = ListItem(
+        /* id = */ item.uri,
+        /* uri = */ item.uri,
+        /* imageUri = */ item.imageUri,
+        /* title = */ item.title,
+        /* subtitle = */ item.subtitle,
+        /* playable = */ true,
+        /* hasChildren = */ true,
+    )
 
     private fun publish() {
         listener?.invoke(

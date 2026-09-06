@@ -52,6 +52,15 @@ inside it rather than the whole screen. Their covers are ordinary https URLs, fe
 directly, while App Remote rows keep going through `ImagesApi`; `ArtworkLoader` is the
 one place that knows the difference.
 
+**And the Web API only lends you your own playlists.** Two things had to be measured
+against the live API rather than read in the documentation. `/playlists/{id}/tracks`
+answers 403 Forbidden while `/playlists/{id}` answers 200 — the paging object inside it
+points at `/playlists/{id}/items`, and each entry there wraps the track as `item`, not
+`track`, the way `/me/tracks` still does. And of the playlists `/me/playlists` returns,
+`/items` succeeds for every one the user owns and fails with 403 for every one they only
+follow: twelve checked, the split exactly on ownership. So a followed playlist falls back
+to App Remote, which has no such rule, and the row leads somewhere either way.
+
 **Spotify collaborates.** App Remote drives the installed Spotify app: `ContentApi`
 gives the same browse tree Spotify exposes to car head units (no separate OAuth token
 needed) and `playContentItem` / `play(uri)` start playback. Playing a *specific* track
@@ -215,7 +224,10 @@ The library and the controls, on the same device:
   covers over https, and tapping a track in Liked Songs starts it (`spotify:track:…`
   through `playUri`, since a Web API row is not a node App Remote can resolve).
 - The queue button appears once Spotify publishes a queue and stays hidden when it does
-  not, which at the root of the library it does not.
+  not. Opening it from reading mode drops reading mode first: they draw in the same
+  area, and both at once was a glitch, not a layout.
+- Your own playlist opens over the Web API; a followed one (403) falls back to App
+  Remote and loads its thirty rows from there.
 
 And end to end with Spotify:
 
