@@ -184,6 +184,12 @@ adb shell cmd notification allow_listener com.dualmusic.thor/com.dualmusic.thor.
   `MediaSessionCompat`, and from a token obtained through `getActiveSessions()` the
   compat layer can send `setRepeatMode` but never read the mode back. A switch that
   cannot show its own state is worse than no switch, so there is none.
+- **A track is played where it was tapped.** `play(trackUri)` starts that track with no
+  context, so Spotify follows it with autoplay and the rest of the playlist never comes:
+  the queue was simply wrong. A collection is now started at the tapped index instead
+  (`PlayerApi.skipToIndex`), and a list with no context URI of its own — Liked Songs,
+  search results — is handed to the player as an explicit list of tracks through the
+  Web API. Both fall back to playing the single track if the player refuses.
 - **Queue rows get their covers from the player itself.** A MediaSession queue entry
   carries an `iconUri` — Spotify hands out a `content://` into its own media provider,
   the one it exports for car clients — so the cover needs no request and no token. When
@@ -237,6 +243,10 @@ The library and the controls, on the same device:
 - The queue button appears once Spotify publishes a queue and stays hidden when it does
   not. Opening it from reading mode drops reading mode first: they draw in the same
   area, and both at once was a glitch, not a layout.
+- Tapping the third track of a playlist continues with the fourth: the queue reads
+  "you broke my heart, Telephone, Gimme More" against a playlist that reads "Legendary
+  Lovers, Do Or Die, you broke my heart, Telephone". From Liked Songs the queue matches
+  `/me/tracks` index for index.
 - The queue shows a cover per row, read from Spotify's provider with no fallback needed,
   and the word fill moves within a line: "Did you wa|nt it to be this way?" one second,
   "Did you want it to b|e this way?" the next.

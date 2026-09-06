@@ -46,6 +46,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private val webApi by lazy { SpotifyWebApi(this) }
     private val audio by lazy { getSystemService(AudioManager::class.java) }
     private var searchMode = false
+    private var searchResults: List<ListItem> = emptyList()
     private var queueMode = false
     private var lyricsKey: String? = null
     private var lyrics: Lyrics = Lyrics.NONE
@@ -459,7 +460,10 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         if (!searchMode) return
         webApi.search(
             query,
-            onResults = { controlsBinder?.showSearchResults(it) },
+            onResults = {
+                searchResults = it
+                controlsBinder?.showSearchResults(it)
+            },
             onError = { controlsBinder?.showSearchMessage(it) },
         )
     }
@@ -487,9 +491,14 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         nowPlayingBinder?.setReadingMode(enabled)
     }
 
-    override fun onBrowseItemTapped(item: ListItem) {
-        // A search hit is not part of the browse tree, so it plays by URI.
-        if (searchMode) spotify.playUri(item.uri) else browser.onItemTapped(item)
+    override fun onBrowseItemTapped(item: ListItem, position: Int) {
+        // A search hit is not part of the browse tree, so the results are the context:
+        // playing the hit alone would leave Spotify to invent what comes after it.
+        if (searchMode) {
+            webApi.playTracks(searchResults.map { it.uri }, position) { spotify.playUri(item.uri) }
+        } else {
+            browser.onItemTapped(item, position)
+        }
     }
 
     override fun loadArtwork(item: ListItem, onBitmap: (android.graphics.Bitmap) -> Unit) =

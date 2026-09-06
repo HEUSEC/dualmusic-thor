@@ -35,6 +35,9 @@ class SpotifyWebApi(private val context: Context) {
         private const val TIMEOUT_MS = 10000
         private const val PAGE = 50
 
+        /** How much of a list is handed to the player as the queue. */
+        private const val PLAY_MAX = 50
+
         /** Synthetic nodes: not Spotify URIs, so nothing tries to play them. */
         const val LIKED_URI = "dualmusic:liked"
         const val RECOMMENDED_URI = "dualmusic:recommended"
@@ -133,6 +136,36 @@ class SpotifyWebApi(private val context: Context) {
                 }.getOrNull()
                 synchronized(trackImages) { trackImages[trackUri] = url }
                 main.post { onUrl(url) }
+            }
+        }
+    }
+
+    /**
+     * Starts an explicit list of tracks, the given one first. Liked Songs and search
+     * results are not a context App Remote can be pointed at — there is no URI for
+     * "the tracks I saved" — so the list itself is handed to the player, and what
+     * follows the tapped track is the rest of what was on screen.
+     */
+    fun playTracks(uris: List<String>, offset: Int, onError: (String) -> Unit) {
+        if (uris.isEmpty()) return
+        val from = offset.coerceIn(0, uris.lastIndex)
+        // The endpoint takes a bounded list; start it at the tapped track so the whole
+        // window is the part of the list the user can still reach.
+        val window = uris.drop(from).take(PLAY_MAX)
+        SpotifyWebAuth.withToken(context) { token ->
+            if (token == null) {
+                onError(context.getString(R.string.search_needs_auth))
+                return@withToken
+            }
+            executor.execute {
+                val failure = runCatching {
+                    val body = JSONObject().put("uris", JSONArray(window))
+                    put("$BASE/me/player/play", body, token)
+                }.exceptionOrNull()
+                if (failure != null) {
+                    Log.w(TAG, "could not start the list", failure)
+                    main.post { onError(failure.message ?: "play failed") }
+                }
             }
         }
     }
@@ -248,6 +281,28 @@ class SpotifyWebApi(private val context: Context) {
         /* playable = */ false,
         /* hasChildren = */ true,
     )
+
+    private fun put(url: String, body: JSONObject, token: String) {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "PUT"
+            doOutput = true
+            connectTimeout = TIMEOUT_MS
+            readTimeout = TIMEOUT_MS
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Content-Type", "application/json")
+        }
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = connection.responseCode
+            // The player answers 204 with no body, and 202 while it is still waking up.
+            if (code != 204 && code != 202 && code != 200) {
+                val error = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                throw IllegalStateException("HTTP $code: $error")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     private fun getJson(url: String, token: String): JSONObject? {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {

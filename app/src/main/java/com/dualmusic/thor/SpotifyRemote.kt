@@ -143,6 +143,17 @@ class SpotifyRemote(private val context: Context) {
         api.playContentItem(item).setErrorCallback { e -> onError(describe(e)) }
     }
 
+    /**
+     * Plays a collection from one of its entries. This is what makes the rest of the
+     * playlist follow: `play(trackUri)` starts that track with no context at all, and
+     * Spotify then continues with whatever autoplay decides rather than the album or
+     * playlist the track was tapped in.
+     */
+    fun playAt(contextUri: String, index: Int, onError: (String) -> Unit = {}) {
+        val api = remote?.playerApi ?: return onError("not connected")
+        api.skipToIndex(contextUri, index).setErrorCallback { e -> onError(describe(e)) }
+    }
+
     fun playUri(uri: String, onError: (String) -> Unit = {}) {
         val api = remote?.playerApi ?: return onError("not connected")
         api.play(uri).setErrorCallback { e -> onError(describe(e)) }

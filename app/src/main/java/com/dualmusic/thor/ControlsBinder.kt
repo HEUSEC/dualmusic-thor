@@ -38,7 +38,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onToggleLyrics()
         fun onOpenSearch()
         fun onSearch(query: String)
-        fun onBrowseItemTapped(item: ListItem)
+        fun onBrowseItemTapped(item: ListItem, position: Int)
         fun onBrowseBack()
         fun loadArtwork(item: ListItem, onBitmap: (Bitmap) -> Unit)
     }
@@ -260,15 +260,18 @@ class ControlsBinder(root: View, private val actions: Actions) {
     }
 
     /** Browse items and search hits are the same kind of row: tap to open or play. */
-    private fun rowsOf(items: List<ListItem>): List<BrowseAdapter.Row> = items.map { item ->
-        BrowseAdapter.Row(
-            title = item.title.orEmpty(),
-            subtitle = item.subtitle,
-            source = item,
-            current = false,
-            onTap = { actions.onBrowseItemTapped(item) },
-        )
-    }
+    private fun rowsOf(items: List<ListItem>): List<BrowseAdapter.Row> =
+        items.mapIndexed { position, item ->
+            BrowseAdapter.Row(
+                title = item.title.orEmpty(),
+                subtitle = item.subtitle,
+                source = item,
+                current = false,
+                // The position is what lets a track be played inside its list rather
+                // than on its own.
+                onTap = { actions.onBrowseItemTapped(item, position) },
+            )
+        }
 
     fun showSearchResults(items: List<ListItem>) {
         if (!searchMode) return

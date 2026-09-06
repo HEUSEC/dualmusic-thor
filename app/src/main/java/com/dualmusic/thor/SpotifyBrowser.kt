@@ -36,6 +36,9 @@ class SpotifyBrowser(
     private companion object {
         const val TAG = "SpotifyBrowser"
 
+        /** Collections App Remote can start at a given index. */
+        val CONTEXT_PREFIXES = listOf("spotify:playlist:", "spotify:album:")
+
         /** URIs App Remote can play directly; anything else goes through ContentApi. */
         val PLAYABLE_PREFIXES = listOf(
             "spotify:track:", "spotify:playlist:", "spotify:album:", "spotify:artist:",
@@ -70,30 +73,51 @@ class SpotifyBrowser(
     }
 
     /** A tap on a row: descend when possible, otherwise play it. */
-    fun onItemTapped(item: ListItem) {
+    fun onItemTapped(item: ListItem, position: Int = -1) {
         Log.i(TAG, "tapped ${item.title} playable=${item.playable} children=${item.hasChildren} uri=${item.uri}")
         if (item.hasChildren) {
             stack.addLast(item)
             load(item)
         } else if (item.playable) {
-            play(item)
+            play(item, if (position >= 0) position else items.indexOf(item))
         }
     }
 
     /**
-     * A row built from the Web API is not a node of App Remote's tree, so
-     * `playContentItem` has nothing to resolve; anything with a real Spotify URI is
-     * played by URI instead, which is also what search results already do.
+     * Plays a row *where it was tapped*. A track played by its own URI has no context,
+     * so Spotify follows it with autoplay instead of the rest of the list — which is
+     * the whole point of tapping a track in a playlist. So a collection is started at
+     * the tapped index, and a list with no context URI of its own hands the player the
+     * tracks themselves.
+     *
+     * A row built from the Web API is not a node of App Remote's tree either, so
+     * `playContentItem` is left to the rows that came from `ContentApi`.
      */
-    private fun play(item: ListItem) {
+    private fun play(item: ListItem, position: Int) {
         val onError: (String) -> Unit = { reason ->
             error = reason
             publish()
         }
-        if (PLAYABLE_PREFIXES.any { item.uri.startsWith(it) }) {
-            remote.playUri(item.uri, onError)
-        } else {
-            remote.play(item, onError)
+        val context = stack.lastOrNull()?.uri
+        val library = web?.takeIf { it.isAuthorised() }
+
+        when {
+            context != null && CONTEXT_PREFIXES.any { context.startsWith(it) } && position >= 0 ->
+                remote.playAt(context, position) { reason ->
+                    Log.i(TAG, "no context playback for $context ($reason); playing the track alone")
+                    remote.playUri(item.uri, onError)
+                }
+
+            // "The tracks I saved" is not a URI, so the window of it we loaded is.
+            context == SpotifyWebApi.LIKED_URI && library != null && position >= 0 ->
+                library.playTracks(items.map { it.uri }, position) { reason ->
+                    Log.i(TAG, "no list playback ($reason); playing the track alone")
+                    remote.playUri(item.uri, onError)
+                }
+
+            PLAYABLE_PREFIXES.any { item.uri.startsWith(it) } -> remote.playUri(item.uri, onError)
+
+            else -> remote.play(item, onError)
         }
     }
 
