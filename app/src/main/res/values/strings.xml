@@ -40,6 +40,8 @@
     <string name="no_lyrics">No lyrics found for this track</string>
     <string name="spotify_not_configured">No Spotify client ID compiled in</string>
     <string name="browse_root">Your Library</string>
+    <string name="connect_library">Connect your library</string>
+    <string name="connect_library_hint">Your playlists and saved songs, in one step</string>
     <string name="liked_songs">Liked Songs</string>
     <string name="liked_songs_hint">Everything you saved</string>
     <string name="recommended_by_spotify">Made by Spotify</string>

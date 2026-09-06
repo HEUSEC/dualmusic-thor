@@ -41,6 +41,7 @@ class SpotifyWebApi(private val context: Context) {
         /** Synthetic nodes: not Spotify URIs, so nothing tries to play them. */
         const val LIKED_URI = "dualmusic:liked"
         const val RECOMMENDED_URI = "dualmusic:recommended"
+        const val AUTHORISE_URI = "dualmusic:authorise"
     }
 
     private val executor = Executors.newSingleThreadExecutor()

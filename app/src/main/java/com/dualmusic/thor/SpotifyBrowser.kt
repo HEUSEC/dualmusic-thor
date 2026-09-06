@@ -21,6 +21,8 @@ import com.spotify.protocol.types.ListItem
 class SpotifyBrowser(
     private val remote: SpotifyRemote,
     private val web: SpotifyWebApi? = null,
+    private val authoriseTitle: String = "Connect your library",
+    private val authoriseSubtitle: String = "Your playlists and saved songs, in one step",
 ) {
 
     data class State(
@@ -52,6 +54,12 @@ class SpotifyBrowser(
     private var error: String? = null
     private var listener: ((State) -> Unit)? = null
 
+    /**
+     * Asked for when the user taps the row that offers to connect their library. The
+     * consent runs in a browser, which is the host's business, not this class's.
+     */
+    var onAuthoriseRequested: (() -> Unit)? = null
+
     val isAtRoot: Boolean get() = stack.isEmpty()
 
     fun observe(listener: (State) -> Unit) {
@@ -78,6 +86,8 @@ class SpotifyBrowser(
         if (item.hasChildren) {
             stack.addLast(item)
             load(item)
+        } else if (item.uri == SpotifyWebApi.AUTHORISE_URI) {
+            onAuthoriseRequested?.invoke()
         } else if (item.playable) {
             play(item, if (position >= 0) position else items.indexOf(item))
         }
@@ -154,9 +164,15 @@ class SpotifyBrowser(
 
         val library = web?.takeIf { it.isAuthorised() }
         when {
+            // Without a Web API token the tree is Spotify's recommendations, which is
+            // not nothing but is not the user's library either. Rather than degrade
+            // quietly, the root says so in a row that starts the consent.
             item == null ->
                 if (library != null) library.library(onItems, onError)
-                else remote.loadRoot(onItems = onItems, onError = onError)
+                else remote.loadRoot(
+                    onItems = { loaded -> onItems(listOf(authoriseNode()) + loaded) },
+                    onError = onError,
+                )
 
             item.uri == SpotifyWebApi.LIKED_URI ->
                 library?.savedTracks(onItems, onError) ?: onError("not authorised")
@@ -178,6 +194,16 @@ class SpotifyBrowser(
             else -> remote.loadChildren(item, 0, onItems, onError)
         }
     }
+
+    private fun authoriseNode() = ListItem(
+        /* id = */ SpotifyWebApi.AUTHORISE_URI,
+        /* uri = */ SpotifyWebApi.AUTHORISE_URI,
+        /* imageUri = */ null,
+        /* title = */ authoriseTitle,
+        /* subtitle = */ authoriseSubtitle,
+        /* playable = */ false,
+        /* hasChildren = */ false,
+    )
 
     /**
      * The same playlist as ContentApi wants it. Rows built from the Web API carry the

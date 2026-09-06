@@ -198,6 +198,9 @@ The library and the controls, on the same device:
 - `BUTTON_A` toggles playback (`state=2 -> 3`), `R2`/`L2` seek by ten seconds
   (`67.8s -> 85.8s -> 76.9s`), `L1`/`R1` skip; the D-pad is left to the list.
 - Lyrics land in `cache/lyrics` as `synced` plus the LRC, one file per song.
+- With no Web API token the root is Spotify's recommendations with one row on top
+  offering to connect the library; tapping it completed the browser consent and the root
+  became the library five seconds later.
 - The root lists 40 rows — Liked Songs, 38 playlists, Made by Spotify — with their real
   covers over https, and tapping a track in Liked Songs starts it (`spotify:track:…`
   through `playUri`, since a Web API row is not a node App Remote can resolve).

@@ -90,7 +90,13 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         hub = MediaHub(applicationContext)
         spotify = SpotifyRemote(this)
         artwork = ArtworkLoader(this, spotify, webApi)
-        browser = SpotifyBrowser(spotify, webApi)
+        browser = SpotifyBrowser(
+            spotify,
+            webApi,
+            authoriseTitle = getString(R.string.connect_library),
+            authoriseSubtitle = getString(R.string.connect_library_hint),
+        )
+        browser.onAuthoriseRequested = { SpotifyWebAuth.authorize(this) }
     }
 
     override fun onStart() {
