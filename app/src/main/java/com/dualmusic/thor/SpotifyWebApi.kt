@@ -46,6 +46,8 @@ class SpotifyWebApi(private val context: Context) {
     /** In flight or not: only the newest query is allowed to deliver. */
     private var latestQuery: String? = null
 
+    private val trackImages = HashMap<String, String?>()
+
     fun isAuthorised(): Boolean = SpotifyWebAuth.isAuthorised(context)
 
     // --- library --------------------------------------------------------------
@@ -103,6 +105,35 @@ class SpotifyWebApi(private val context: Context) {
         deliver(onResults, onError) { token ->
             val json = getJson("$BASE/playlists/$id/items?limit=$PAGE", token)
             tracksOf(json?.optJSONArray("items"), wrapped = true)
+        }
+    }
+
+    /**
+     * The album cover for a single track. A queue entry knows its track URI and little
+     * else, and its own player may refuse the image it offered, so this is the way back
+     * to a cover. Answers are remembered, misses included: the same queue is bound again
+     * on every snapshot.
+     */
+    fun trackImage(trackUri: String, onUrl: (String?) -> Unit) {
+        synchronized(trackImages) {
+            if (trackImages.containsKey(trackUri)) {
+                onUrl(trackImages[trackUri])
+                return
+            }
+        }
+        val id = trackUri.substringAfterLast(':')
+        SpotifyWebAuth.withToken(context) { token ->
+            if (token == null) {
+                onUrl(null)
+                return@withToken
+            }
+            executor.execute {
+                val url = runCatching {
+                    imageOf(getJson("$BASE/tracks/$id", token)?.optJSONObject("album")?.optJSONArray("images"))?.raw
+                }.getOrNull()
+                synchronized(trackImages) { trackImages[trackUri] = url }
+                main.post { onUrl(url) }
+            }
         }
     }
 

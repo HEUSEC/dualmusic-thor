@@ -15,6 +15,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import com.spotify.protocol.types.ImageUri
 import com.spotify.protocol.types.ListItem
 
 /**
@@ -211,7 +212,17 @@ class ControlsBinder(root: View, private val actions: Actions) {
                 BrowseAdapter.Row(
                     title = entry.title,
                     subtitle = entry.subtitle,
-                    source = null,
+                    // The cover the player offered, with the track URI behind it so the
+                    // loader can ask the Web API when that cover cannot be read.
+                    source = ListItem(
+                        /* id = */ entry.trackUri.orEmpty(),
+                        /* uri = */ entry.trackUri.orEmpty(),
+                        /* imageUri = */ entry.artUri?.let(::ImageUri),
+                        /* title = */ entry.title,
+                        /* subtitle = */ entry.subtitle.orEmpty(),
+                        /* playable = */ true,
+                        /* hasChildren = */ false,
+                    ),
                     current = entry.isCurrent,
                     onTap = { actions.onQueueItemTapped(entry) },
                 )

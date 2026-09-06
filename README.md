@@ -184,6 +184,17 @@ adb shell cmd notification allow_listener com.dualmusic.thor/com.dualmusic.thor.
   `MediaSessionCompat`, and from a token obtained through `getActiveSessions()` the
   compat layer can send `setRepeatMode` but never read the mode back. A switch that
   cannot show its own state is worse than no switch, so there is none.
+- **Queue rows get their covers from the player itself.** A MediaSession queue entry
+  carries an `iconUri` — Spotify hands out a `content://` into its own media provider,
+  the one it exports for car clients — so the cover needs no request and no token. When
+  that provider refuses, the entry also carries the track URI as its media id, and the
+  Web API is asked for the album image instead. Covers arrive at 640px and are sampled
+  down to about 160, because a list of full-size ones is megabytes of heap.
+- **The colour arrives with the voice, never before it.** Word positions come from the
+  laid-out text, which is only measured a frame after the line becomes current, and
+  until then there is no span to run a gradient across. That case used to paint the
+  whole word at once, so every line began with its first word already lit; now the word
+  waits, and the sweep is redone as soon as the measurement lands.
 - **Lyrics survive a restart.** Each lookup is written to `cacheDir/lyrics` as its kind
   and its raw LRC, so the same song costs LRCLIB nothing twice. Misses are cached too,
   but expire after a week: a song missing today may be added next month.
@@ -226,6 +237,9 @@ The library and the controls, on the same device:
 - The queue button appears once Spotify publishes a queue and stays hidden when it does
   not. Opening it from reading mode drops reading mode first: they draw in the same
   area, and both at once was a glitch, not a layout.
+- The queue shows a cover per row, read from Spotify's provider with no fallback needed,
+  and the word fill moves within a line: "Did you wa|nt it to be this way?" one second,
+  "Did you want it to b|e this way?" the next.
 - Your own playlist opens over the Web API; a followed one (403) falls back to App
   Remote and loads its thirty rows from there.
 

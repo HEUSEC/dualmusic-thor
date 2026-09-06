@@ -39,12 +39,19 @@ class MediaHub(private val context: Context) {
         val isPlaying: Boolean,
     )
 
-    /** One entry of the player's own queue, as it publishes it. */
+    /**
+     * One entry of the player's own queue, as it publishes it. [artUri] is whatever the
+     * player offers as a cover — Spotify hands out a `content://` URI into its own media
+     * provider — and [trackUri] is the media id, which for Spotify is the track URI and
+     * so is something the Web API can be asked about when the provider will not answer.
+     */
     data class QueueEntry(
         val id: Long,
         val title: String,
         val subtitle: String?,
         val isCurrent: Boolean,
+        val artUri: String?,
+        val trackUri: String?,
     )
 
     /**
@@ -335,6 +342,8 @@ class MediaHub(private val context: Context) {
                 title = title,
                 subtitle = description.subtitle?.toString()?.takeIf { it.isNotBlank() },
                 isCurrent = item.queueId == currentId,
+                artUri = description.iconUri?.toString(),
+                trackUri = description.mediaId,
             )
         }
     }

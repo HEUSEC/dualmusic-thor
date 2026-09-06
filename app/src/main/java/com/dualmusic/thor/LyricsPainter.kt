@@ -71,6 +71,7 @@ class LyricsPainter(
     private var wordBounds: List<Pair<Float, Float>> = emptyList()
     private var fill: WordFill? = null
     private var fillAnimator: ValueAnimator? = null
+    private var lastPositionMs = 0L
 
     /** Set where the panel can be touched: a tap on a line seeks to it. */
     var onSeek: ((Long) -> Unit)? = null
@@ -125,6 +126,7 @@ class LyricsPainter(
     }
 
     fun update(positionMs: Long, durationMs: Long) {
+        lastPositionMs = positionMs
         if (lyrics.isEmpty) return
 
         if (!lyrics.synced) {
@@ -167,6 +169,10 @@ class LyricsPainter(
                 val end = word.endIndex.coerceIn(start, line.text.length)
                 layout.getPrimaryHorizontal(start) to layout.getPrimaryHorizontal(end)
             }
+            // The first sweep of a line runs before the text has been laid out, so it
+            // had no span to fill; now that there is one, sweep the line again.
+            currentWord = -2
+            sweep(index, lastPositionMs)
         }
     }
 
@@ -206,10 +212,12 @@ class LyricsPainter(
             view.text = spannable
             startFill(view, wordFill, current, positionMs)
         } else {
-            // No measured position yet: fall back to colouring the whole word at once.
+            // Nothing measured yet, so there is no span to sweep. The word stays unsung:
+            // colouring it whole was what made the first word of every line arrive
+            // already lit, since the measurement only lands a frame later.
             if (current != null && tail > sungTo) {
                 spannable.setSpan(
-                    ForegroundColorSpan(CURRENT_INK), sungTo, tail, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    ForegroundColorSpan(inkAlpha(0.38f)), sungTo, tail, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             }
             view.text = spannable

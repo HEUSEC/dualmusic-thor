@@ -88,7 +88,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         displayManager = getSystemService(DisplayManager::class.java)
         hub = MediaHub(applicationContext)
         spotify = SpotifyRemote(this)
-        artwork = ArtworkLoader(spotify)
+        artwork = ArtworkLoader(this, spotify, webApi)
         browser = SpotifyBrowser(spotify, webApi)
     }
 
