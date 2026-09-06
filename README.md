@@ -49,6 +49,76 @@ it publishes as a MediaSession is still controllable, like any other player.
 our own is the next real piece of work, and it is the only way this app ever owns a
 queue rather than borrowing one.
 
+## How Spotify is used, and what it refuses
+
+**Spotify collaborates.** App Remote drives the installed Spotify app: `ContentApi`
+gives the same browse tree Spotify exposes to car head units (no separate OAuth token
+needed) and `playContentItem` / `play(uri)` start playback. Playing a *specific* track
+URI requires Premium — `UserApi.getCapabilities().canPlayOnDemand` is checked at connect
+time rather than discovered through a failed `play()`.
+
+**But `ContentApi` is not your library.** `getRecommendedContentItems` returns Spotify's
+editorial sections and nothing else, whichever root type is asked for: `default`,
+`navigation` and `automotive` were all run against the account on the device and all
+answered with the same thirty rows — "Buonasera", "Stazioni consigliate", "Creato per
+HEUSEC". There is no node for saved tracks and none for the user's own playlists, and
+every one of those rows carries an *empty* image id, which is why they had no covers.
+So the root of the browse tree is the library from the Web API — `/me/playlists`,
+`/me/tracks`, `/playlists/{id}/tracks` — and Spotify's recommendations are one row
+inside it rather than the whole screen. Their covers are ordinary https URLs, fetched
+directly, while App Remote rows keep going through `ImagesApi`; `ArtworkLoader` is the
+one place that knows the difference.
+
+**And the Web API only lends you your own playlists.** Two things were found by measuring
+the live API rather than by reading the documentation, and both turn out to be policy
+rather than accident. `/playlists/{id}/tracks` answers 403 Forbidden while
+`/playlists/{id}` answers 200 — the paging object inside it points at
+`/playlists/{id}/items`, and each entry there wraps the track as `item`, not `track`, the
+way `/me/tracks` still does. And of the playlists `/me/playlists` returns, `/items`
+succeeds for every one the user owns and fails for every one they only follow: twelve
+checked, the split exactly on ownership.
+
+Spotify's [February 2026 migration guide][migration] states both directly — library
+endpoints were redesigned around generic URIs, and "playlist contents (`items`) are only
+returned for playlists the user owns or collaborates on". So a followed playlist falls
+back to App Remote, which the Web API's rules do not bind, and the row leads somewhere
+either way.
+
+**What a Development Mode app is allowed, since 9 March 2026.** One Client ID, five
+authorised users, a Premium account for the owner, and a reduced set of endpoints: batch
+fetches (`GET /tracks`, `GET /albums`), browse, artist top tracks and other users' data
+are all gone. This app stays inside that set — single-item `GET /tracks/{id}` for a
+cover, `/me/*` for the library, `/playlists/{id}/items` for a playlist it owns. The way
+out, [extended quota mode][quota], has been open only to registered organizations with a
+launched service and roughly 250,000 monthly active users since May 2025, which a
+handheld music client does not reach. So anyone running this registers their own app and
+puts their own client ID in `local.properties`; five people can share one.
+
+[migration]: https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide
+[quota]: https://developer.spotify.com/documentation/web-api/concepts/rate-limits
+
+### The consent flow, and why we send the SSO intent ourselves
+
+Connecting App Remote for the first time fails with `UserNotAuthorizedException` until
+the user approves the app inside Spotify. Two things about that flow cost a long
+debugging session and are worth writing down:
+
+1. **The dashboard entry is what Spotify's app checks.** With the Android package
+   unregistered, Spotify's own SSO activity rejects the request in ~250 ms with
+   `AUTHENTICATION_SERVICE_UNAVAILABLE` — an error that looks like a network or SDK
+   fault and is really "I have never heard of this package". The browser OAuth flow
+   still worked at that point, because it validates only the client ID and redirect URI,
+   which is what made the difference diagnosable.
+2. **The web grant is not the App Remote grant.** Completing OAuth in the browser
+   records a server-side grant, and App Remote still refused: it checks an authorisation
+   held by the Spotify app itself. Only the in-app SSO screen creates that.
+
+`SpotifyNativeAuth` therefore sends `com.spotify.sso.action.START_AUTH_FLOW` directly
+instead of going through `AuthorizationClient`, which swallows Spotify's own ERROR extra
+and reports its generic code. It keeps the SDK's signature check (the same six hashes,
+compared the way the SDK computes them — SHA-1 over `Signature.toCharsString()`, not the
+certificate fingerprint `apksigner` prints) so we still refuse to hand the user to an
+impostor.
 ## Setup required before Spotify works
 
 1. Install Spotify on the Thor and log into the Premium account.
