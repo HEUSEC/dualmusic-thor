@@ -1,0 +1,9 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+*.iml
+.idea/
+
+# The Spotify App Remote SDK is fetched by build.sh, not kept here.
+app/libs/*.aar

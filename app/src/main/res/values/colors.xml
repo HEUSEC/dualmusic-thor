@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light console palette from the DualMusic Redesign canvas. Contrast figures are
+     the ones the design spec states against the shell colour. -->
+<resources>
+    <color name="ground">#FF5FDCB4</color>          <!-- mint ground behind the shell -->
+    <color name="shell">#FFF4F7F3</color>           <!-- the rounded card that holds a panel -->
+    <color name="panel">#FFE7EDE8</color>           <!-- inset panel: lyrics, dock -->
+    <color name="row_rest">#FFEDF1EE</color>
+    <color name="art_rest">#FFDCE6E0</color>
+
+    <color name="ink">#FF12241E</color>             <!-- text primary, 13.9:1 -->
+    <color name="ink_soft">#FF5A736A</color>        <!-- text secondary, 4.9:1 -->
+    <color name="ink_artist">#FF3E5B51</color>
+
+    <color name="accent">#FF0FA98A</color>
+    <color name="accent_light">#FF6EEBC5</color>
+
+    <!-- Ink on a tile is the dark tint of its own hue, never white on gradient. -->
+    <color name="ink_amber">#FF3A1C02</color>
+    <color name="ink_blue">#FF062440</color>
+    <color name="ink_pink">#FF400A1F</color>
+    <color name="ink_violet">#FF1B0A45</color>
+    <color name="ink_mint">#FF04241C</color>
+    <color name="ink_grey">#FF12241E</color>
+</resources>

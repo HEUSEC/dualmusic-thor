@@ -1,0 +1,487 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NEAR SCREEN — 1240x1080, thumb-driven. Shell on the mint ground: header,
+     browse area, floating dock. Every hit rect is at least 45dp. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/controlsRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ground"
+    android:padding="11dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/shell"
+        android:padding="11dp"
+        android:orientation="vertical">
+
+        <!-- Header: back, breadcrumb + level title, source pill. -->
+        <LinearLayout
+            android:id="@+id/controlsHeader"
+            android:layout_width="match_parent"
+            android:layout_height="45dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:baselineAligned="false">
+
+            <ImageButton
+                android:id="@+id/btnBrowseBack"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_media_previous"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="12dp"
+                android:contentDescription="@string/back" />
+
+            <LinearLayout
+                android:id="@+id/headerTitles"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/browseCrumb"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.04"
+                    android:singleLine="true"
+                    android:ellipsize="start"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/browseTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/ink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:singleLine="true"
+                    android:ellipsize="end" />
+            </LinearLayout>
+
+            <EditText
+                android:id="@+id/searchInput"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/panel_inset"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:hint="@string/search_hint"
+                android:textColorHint="@color/ink_soft"
+                android:textColor="@color/ink"
+                android:textSize="15sp"
+                android:inputType="text"
+                android:imeOptions="actionSearch|flagNoExtractUi"
+                android:singleLine="true"
+                android:visibility="gone" />
+
+            <ImageButton
+                android:id="@+id/btnSearch"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="6dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_search"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:contentDescription="@string/search" />
+
+            <TextView
+                android:id="@+id/btnSpotify"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="wrap_content"
+                android:layout_height="35dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/pill_accent"
+                android:gravity="center"
+                android:minWidth="64dp"
+                android:paddingStart="13dp"
+                android:paddingEnd="13dp"
+                android:textColor="@color/ink_mint"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <!-- Notification-listener access missing: the banner carries the action. -->
+        <LinearLayout
+            android:id="@+id/permissionBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="9dp"
+            android:background="@drawable/pill_warning"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="11dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/permission_needed"
+                android:textColor="@color/ink_amber"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/grantButton"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="wrap_content"
+                android:layout_height="31dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/white_card"
+                android:gravity="center"
+                android:minWidth="64dp"
+                android:paddingStart="13dp"
+                android:paddingEnd="13dp"
+                android:text="@string/grant"
+                android:textColor="@color/ink_amber"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <!-- One pill per live player; the whole row goes when only one is alive. -->
+        <LinearLayout
+            android:id="@+id/sessionSwitcher"
+            android:layout_width="match_parent"
+            android:layout_height="35dp"
+            android:layout_marginTop="9dp"
+            android:orientation="horizontal"
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="9dp">
+
+            <GridView
+                android:id="@+id/browseList"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:numColumns="2"
+                android:horizontalSpacing="9dp"
+                android:verticalSpacing="9dp"
+                android:stretchMode="columnWidth"
+                android:listSelector="@android:color/transparent"
+                android:scrollbars="none" />
+
+            <TextView
+                android:id="@+id/browseMessage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:padding="24dp"
+                android:textColor="@color/ink_soft"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <!-- Reading mode: the lyrics move to the far screen, and this panel
+                 becomes the record itself. The caption sits beside the cover so the
+                 cover can use the panel's full height. -->
+            <LinearLayout
+                android:id="@+id/nearLyricsPanel"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:baselineAligned="false"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/nearBigArt"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="@string/artwork" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="14dp"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/nearBigTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-black"
+                        android:textColor="@color/ink"
+                        android:textSize="24sp"
+                        android:letterSpacing="-0.02"
+                        android:maxLines="3"
+                        android:ellipsize="end" />
+
+                    <TextView
+                        android:id="@+id/nearBigArtist"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:textColor="@color/ink_soft"
+                        android:textSize="17sp"
+                        android:maxLines="2"
+                        android:ellipsize="end" />
+
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Not connected: the browse area carries the action, transport stays live. -->
+            <LinearLayout
+                android:id="@+id/browseAction"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/browseActionText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="13sp"
+                    android:gravity="center" />
+
+                <TextView
+                    android:id="@+id/browseActionButton"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="wrap_content"
+                    android:layout_height="35dp"
+                    android:layout_marginTop="11dp"
+                    android:background="@drawable/pill_accent"
+                    android:gravity="center"
+                    android:minWidth="96dp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:text="@string/connect_spotify"
+                    android:textColor="@color/ink_mint"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Dock: current track, seek, transport, status band. -->
+        <LinearLayout
+            android:id="@+id/dock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="9dp"
+            android:background="@drawable/dock"
+            android:orientation="vertical"
+            android:paddingStart="11dp"
+            android:paddingEnd="11dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:baselineAligned="false">
+
+                <ImageView
+                    android:id="@+id/nearThumb"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:background="@drawable/thumb_placeholder"
+                    android:clipToOutline="true"
+                    android:scaleType="centerCrop"
+                    android:contentDescription="@string/artwork" />
+
+                <LinearLayout
+                    android:id="@+id/nearTrackTap"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:orientation="vertical"
+                    android:clickable="true"
+                    android:focusable="false"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp">
+
+                    <TextView
+                        android:id="@+id/nearTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/ink"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:singleLine="true"
+                        android:ellipsize="end" />
+
+                    <TextView
+                        android:id="@+id/nearArtist"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/ink_soft"
+                        android:textSize="12sp"
+                        android:singleLine="true"
+                        android:ellipsize="end" />
+                </LinearLayout>
+
+                <View
+                    android:id="@+id/nearReadingSpacer"
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/nearClock"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="12sp"
+                    android:singleLine="true" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/nearSeek"
+                android:layout_width="match_parent"
+                android:layout_height="21dp"
+                android:layout_marginTop="6dp"
+                android:progressDrawable="@drawable/progress_accent"
+                android:thumb="@drawable/seek_thumb"
+                android:splitTrack="false"
+                android:minHeight="9dp"
+                android:maxHeight="9dp"
+                android:max="1000" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/btnPrev"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="52dp"
+                    android:layout_height="match_parent"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_media_previous"
+                    android:tint="@color/ink"
+                    android:scaleType="fitCenter"
+                    android:padding="14dp"
+                    android:contentDescription="@string/previous" />
+
+                <ImageButton
+                    android:id="@+id/btnPlayPause"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pill_accent"
+                    android:src="@android:drawable/ic_media_play"
+                    android:tint="@color/ink_mint"
+                    android:scaleType="fitCenter"
+                    android:padding="12dp"
+                    android:contentDescription="@string/play_pause" />
+
+                <ImageButton
+                    android:id="@+id/btnNext"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="52dp"
+                    android:layout_height="match_parent"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_media_next"
+                    android:tint="@color/ink"
+                    android:scaleType="fitCenter"
+                    android:padding="14dp"
+                    android:contentDescription="@string/next" />
+            </LinearLayout>
+
+            <!-- Status band: fixed 48dp so planned controls can move in without
+                 changing the dock's height. -->
+            <LinearLayout
+                android:id="@+id/statusBand"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="31dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="2dp">
+
+                    <View
+                        android:id="@+id/statusDot"
+                        android:layout_width="7dp"
+                        android:layout_height="7dp"
+                        android:background="@drawable/pill_accent" />
+
+                    <TextView
+                        android:id="@+id/statusLine"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:textColor="@color/ink_soft"
+                        android:textSize="11sp"
+                        android:singleLine="true"
+                        android:ellipsize="end" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/btnSwap"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="wrap_content"
+                    android:layout_height="31dp"
+                    android:layout_marginStart="8dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:minWidth="56dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="@string/swap_screens"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:singleLine="true" />
+
+                <TextView
+                    android:id="@+id/btnAppleMusic"
+                android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="wrap_content"
+                    android:layout_height="31dp"
+                    android:layout_marginStart="8dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:minWidth="56dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="@string/open_apple_music"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:singleLine="true" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

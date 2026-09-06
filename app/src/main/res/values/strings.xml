@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DualMusic</string>
+    <string name="listener_label">DualMusic media access</string>
+
+    <string name="permission_needed">Notification access is off — DualMusic cannot see media sessions.</string>
+    <string name="grant">Grant access</string>
+
+    <string name="no_session">No media session</string>
+    <string name="no_session_hint">Start playback in any music app.</string>
+    <string name="unknown_title">Unknown title</string>
+    <string name="unknown_artist">Unknown artist</string>
+
+    <string name="previous">Previous</string>
+    <string name="play_pause">Play / pause</string>
+    <string name="next">Next</string>
+
+    <string name="swap_screens">Swap</string>
+    <string name="next_session">Next app</string>
+    <string name="single_screen">Single screen</string>
+    <string name="artwork">Album art</string>
+    <string name="open_apple_music">Apple Music</string>
+    <string name="back">Back</string>
+    <string name="connect_spotify">Connect Spotify</string>
+    <string name="spotify_connecting">Connecting to Spotify…</string>
+    <string name="spotify_loading">Loading…</string>
+    <string name="spotify_empty">Nothing here</string>
+    <string name="spotify_disconnected">Spotify not connected</string>
+    <string name="chip_lyrics_on">LYRICS</string>
+    <string name="connect">CONNECT</string>
+    <string name="search">Search</string>
+    <string name="search_hint">Search songs</string>
+    <string name="search_results">Results</string>
+    <string name="search_empty">Nothing found</string>
+    <string name="search_needs_auth">Authorise search in the browser</string>
+    <string name="search_ready">Search is ready</string>
+    <string name="search_auth_failed">Could not authorise search</string>
+    <string name="no_lyrics">No lyrics found for this track</string>
+    <string name="spotify_not_configured">No Spotify client ID compiled in</string>
+    <string name="browse_root">Your Library</string>
+    <string name="connected">Connected</string>
+    <string name="swap">Swap</string>
+    <string name="apple_music_missing">Apple Music is not installed</string>
+</resources>
