@@ -6,5 +6,14 @@
         <item name="android:colorBackground">@color/ground</item>
         <item name="android:textColorPrimary">@color/ink</item>
         <item name="android:textColorSecondary">@color/ink_soft</item>
+
+        <!-- The gesture bar stays, so the ground has to run under it: without these the
+             system paints its own opaque strip and the panel ends in a black band. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

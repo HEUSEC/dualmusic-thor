@@ -14,19 +14,25 @@ Every value in the layouts is that canvas divided by 2.31 (369 dpi), so 1080 px 
 artboard is 468 dp on the device. Built entirely from framework widgets and XML shape
 drawables: no component library, no icon pack, no bitmaps.
 
-## What each source can actually do
+## What this release does
 
-The three sources are not equal, and the difference is imposed from outside:
+**1.0 is a Spotify front-end.** Spotify is the one source that can be both browsed and
+started from another app, so it is the only one this version claims. Everything else
+that plays on the device still reaches the screens and the transport through
+MediaSession — that layer is source-agnostic and always has been — but it is not
+advertised, and nothing in the app is shaped around it.
 
 | Source | Browse & start playback | Control what plays | How |
 |---|---|---|---|
 | Spotify | yes (Premium) | yes | App Remote SDK, `ContentApi` + Web API library |
-| Apple Music | **no** | yes | MediaSession only |
-| Local MP3 | yes (planned) | yes | MediaStore + our own player |
+| Anything else playing | no | yes, incidentally | MediaSession |
+
+Two sources were cut from this release rather than shipped half-built, and both are
+worth writing down because the reasons are external, not a matter of time.
 
 **Apple Music refuses third-party clients.** It does expose a `MediaBrowserService`
 (`com.apple.android.music.player.MediaPlaybackService`), but its `onGetRoot()` returns
-null for us — verified on the device with `BrowseProbeActivity`:
+null for us — verified on the device:
 
 ```
 MediaBrowserService: No root for client com.dualmusic.thor
@@ -36,59 +42,12 @@ BrowseProbe: RESULT connection REFUSED
 That allowlist has no legitimate workaround. The only supported way to start Apple Music
 playback from another app is the MusicKit SDK for Android, which needs a developer token
 and therefore a paid Apple Developer Program membership; that SDK is also stale (Javadoc
-generated 2019, still hand-downloaded AARs). Decision: **Apple Music stays a remote
-control** — transport, metadata and artwork through MediaSession, plus a button that
-hands the user over to the app to start something.
+generated 2019, still hand-downloaded AARs). So Apple Music is not a source here. What
+it publishes as a MediaSession is still controllable, like any other player.
 
-**But `ContentApi` is not your library.** `getRecommendedContentItems` returns Spotify's
-editorial sections and nothing else, whichever root type is asked for: `default`,
-`navigation` and `automotive` were all run against the account on the device and all
-answered with the same thirty rows — "Buonasera", "Stazioni consigliate", "Creato per
-HEUSEC". There is no node for saved tracks and none for the user's own playlists, and
-every one of those rows carries an *empty* image id, which is why they had no covers.
-So the root of the browse tree is the library from the Web API — `/me/playlists`,
-`/me/tracks`, `/playlists/{id}/tracks` — and Spotify's recommendations are one row
-inside it rather than the whole screen. Their covers are ordinary https URLs, fetched
-directly, while App Remote rows keep going through `ImagesApi`; `ArtworkLoader` is the
-one place that knows the difference.
-
-**And the Web API only lends you your own playlists.** Two things had to be measured
-against the live API rather than read in the documentation. `/playlists/{id}/tracks`
-answers 403 Forbidden while `/playlists/{id}` answers 200 — the paging object inside it
-points at `/playlists/{id}/items`, and each entry there wraps the track as `item`, not
-`track`, the way `/me/tracks` still does. And of the playlists `/me/playlists` returns,
-`/items` succeeds for every one the user owns and fails with 403 for every one they only
-follow: twelve checked, the split exactly on ownership. So a followed playlist falls back
-to App Remote, which has no such rule, and the row leads somewhere either way.
-
-**Spotify collaborates.** App Remote drives the installed Spotify app: `ContentApi`
-gives the same browse tree Spotify exposes to car head units (no separate OAuth token
-needed) and `playContentItem` / `play(uri)` start playback. Playing a *specific* track
-URI requires Premium — `UserApi.getCapabilities().canPlayOnDemand` is checked at connect
-time rather than discovered through a failed `play()`.
-
-### The consent flow, and why we send the SSO intent ourselves
-
-Connecting App Remote for the first time fails with `UserNotAuthorizedException` until
-the user approves the app inside Spotify. Two things about that flow cost a long
-debugging session and are worth writing down:
-
-1. **The dashboard entry is what Spotify's app checks.** With the Android package
-   unregistered, Spotify's own SSO activity rejects the request in ~250 ms with
-   `AUTHENTICATION_SERVICE_UNAVAILABLE` — an error that looks like a network or SDK
-   fault and is really "I have never heard of this package". The browser OAuth flow
-   still worked at that point, because it validates only the client ID and redirect URI,
-   which is what made the difference diagnosable.
-2. **The web grant is not the App Remote grant.** Completing OAuth in the browser
-   records a server-side grant, and App Remote still refused: it checks an authorisation
-   held by the Spotify app itself. Only the in-app SSO screen creates that.
-
-`SpotifyNativeAuth` therefore sends `com.spotify.sso.action.START_AUTH_FLOW` directly
-instead of going through `AuthorizationClient`, which swallows Spotify's own ERROR extra
-and reports its generic code. It keeps the SDK's signature check (the same six hashes,
-compared the way the SDK computes them — SHA-1 over `Signature.toCharsString()`, not the
-certificate fingerprint `apksigner` prints) so we still refuse to hand the user to an
-impostor.
+**A local MP3 source is simply not written yet.** MediaStore, ID3 and a `MediaSession` of
+our own is the next real piece of work, and it is the only way this app ever owns a
+queue rather than borrowing one.
 
 ## Setup required before Spotify works
 
@@ -96,10 +55,12 @@ impostor.
 2. Create an app at <https://developer.spotify.com/dashboard> with:
    - redirect URI: `dualmusic://auth`
    - Android package: `com.dualmusic.thor`
-   - SHA-1 of the signing key — for debug builds from this machine:
-     `AB:43:61:69:93:1C:86:4C:29:0D:2E:26:37:A4:DD:87:32:CA:D1:A0`
-     (`~/.android/debug.keystore`; a build on another machine needs that machine's
-     fingerprint added too)
+   - SHA-1 of every signing key that will be used. Spotify checks the *signature of the
+     installed app*, so a debug build and a release build are two different apps to it,
+     and both fingerprints have to be listed:
+     - debug, from this machine: `AB:43:61:69:93:1C:86:4C:29:0D:2E:26:37:A4:DD:87:32:CA:D1:A0`
+     - release 1.0: `59:21:E8:49:0D:BF:17:49:68:A3:D6:11:42:0A:4A:C8:8E:F1:8B:68`
+     A build on another machine needs that machine's debug fingerprint added too.
 3. Put the Client ID in `local.properties` as `spotify.clientId=<id>` (or export
    `SPOTIFY_CLIENT_ID`). It is never committed; a build without it simply runs with
    Spotify switched off.
@@ -264,12 +225,43 @@ And end to end with Spotify:
 
 ## Next
 
-1. Local MP3 source: MediaStore + ID3 + our own `MediaSession`. It is also the only way
-   to get a queue this app controls, since Spotify publishes none.
+1. Local MP3 source: MediaStore + ID3 + our own `MediaSession` — the one source this app
+   would fully own.
 2. Colour from the artwork: tint the shell with the cover's own hue instead of the fixed
    mint, which is what the design notes already promise.
 3. Ambient mode on the big panel once nothing has played for a while, with a pixel shift
    — two panels stay lit for hours on a handheld.
+
+## Building a release
+
+```sh
+JAVA_HOME=~/jdk21 ~/gradle-8.14.3/bin/gradle assembleRelease
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
+The release APK is signed with a key that is not in this repository. `local.properties`
+names it:
+
+```properties
+release.storeFile=/absolute/path/to/dualmusic-release.jks
+release.storePassword=...
+release.keyAlias=dualmusic
+release.keyPassword=...
+```
+
+Without those four lines the release build falls back to the debug key, so a fresh
+checkout still produces something installable. Two consequences worth knowing:
+
+- **A new key is a new app to Spotify.** Its fingerprint has to be added under
+  *Settings → Android Packages* on the dashboard, and the in-app consent screen has to
+  be completed again, before App Remote will connect.
+- **A differently signed build cannot be installed over the old one.** `adb install`
+  fails with a signature mismatch until the previous build is uninstalled, which also
+  clears the Web API token, so search and the library ask for consent once more.
+
+`isMinifyEnabled` is deliberately off: the Spotify SDK talks over a reflective protocol,
+and shrinking it is its own piece of work with its own way of failing at runtime rather
+than at build time.
 
 ## Toolchain on this machine
 

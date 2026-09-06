@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -21,6 +22,15 @@ val spotifyClientId: String = (
         ?: ""
     ).trim()
 
+// Release builds are signed with the key named in local.properties, which never enters
+// the repository. Spotify ties its dashboard entry to the signing fingerprint, so a
+// build signed with a key it does not know is refused at the consent screen: without a
+// release key configured the build falls back to the debug one, which at least keeps a
+// checkout runnable.
+val releaseStore = localProperties.getProperty("release.storeFile")
+    ?.let(::File)
+    ?.takeIf { it.exists() }
+
 android {
     namespace = "com.dualmusic.thor"
     compileSdk = 34
@@ -30,7 +40,7 @@ android {
         minSdk = 33
         targetSdk = 33
         versionCode = 1
-        versionName = "0.1"
+        versionName = "1.0"
 
         buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"$spotifyClientId\"")
     }
@@ -39,9 +49,23 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (releaseStore != null) {
+            create("release") {
+                storeFile = releaseStore
+                storePassword = localProperties.getProperty("release.storePassword")
+                keyAlias = localProperties.getProperty("release.keyAlias")
+                keyPassword = localProperties.getProperty("release.keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // Left off deliberately: the Spotify SDK talks over a reflective protocol
+            // and shrinking it is a separate piece of work with its own way of failing.
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName(if (releaseStore != null) "release" else "debug")
         }
     }
 

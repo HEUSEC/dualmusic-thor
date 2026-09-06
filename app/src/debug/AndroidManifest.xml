@@ -1,16 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    The probes are diagnostics, launched by hand from adb, so they have to be exported —
-    and an exported activity is one any app on the device can start. They therefore live
-    in the debug build only: a release APK does not contain them at all.
+    The probe is a diagnostic, launched by hand from adb, so it has to be exported — and
+    an exported activity is one any app on the device can start. It therefore lives in
+    the debug build only: a release APK does not contain it at all.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
-
-        <activity
-            android:name=".BrowseProbeActivity"
-            android:exported="true" />
 
         <activity
             android:name=".SpotifyProbeActivity"

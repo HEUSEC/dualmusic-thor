@@ -22,7 +22,7 @@ import com.spotify.protocol.types.ListItem
  *
  * Two layers, deliberately separate:
  *  - [MediaHub] says what is playing, for every player on the device, and drives both
- *    panels. It is the only thing Apple Music gives us.
+ *    panels. It follows whatever plays, whichever app is playing it.
  *  - [SpotifyRemote] adds what MediaSession cannot do: browse a library and start a
  *    chosen item. Once something plays, MediaHub reports it like anything else.
  */
@@ -84,7 +84,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.host)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        goEdgeToEdge(window)
+        goEdgeToEdge(window, keepNavigation = true)
         hostContainer = findViewById(R.id.hostContainer)
         displayManager = getSystemService(DisplayManager::class.java)
         hub = MediaHub(applicationContext)
@@ -120,11 +120,22 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         appliedPlan = null
     }
 
-    /** Hides the status and navigation bars; a swipe still brings them back. */
-    private fun goEdgeToEdge(window: android.view.Window) {
+    /**
+     * Draws under the system bars and hides them, but keeps the navigation bar on the
+     * window that owns the home gesture.
+     *
+     * The device navigates by gesture, and a hidden navigation bar spends the first
+     * swipe from the bottom edge on bringing the bars back: leaving the app took two
+     * swipes and looked like it took none. The secondary display has no home gesture to
+     * lose, so there both bars go.
+     */
+    private fun goEdgeToEdge(window: android.view.Window, keepNavigation: Boolean = false) {
         window.setDecorFitsSystemWindows(false)
         window.insetsController?.apply {
-            hide(android.view.WindowInsets.Type.systemBars())
+            hide(
+                if (keepNavigation) android.view.WindowInsets.Type.statusBars()
+                else android.view.WindowInsets.Type.systemBars()
+            )
             systemBarsBehavior =
                 android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }

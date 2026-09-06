@@ -4,13 +4,6 @@
     <!-- Lyrics are fetched from LRCLIB at runtime. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Package visibility (Android 11+): we need to see other players' browse services. -->
-    <queries>
-        <intent>
-            <action android:name="android.media.browse.MediaBrowserService" />
-        </intent>
-    </queries>
-
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_media_play"
