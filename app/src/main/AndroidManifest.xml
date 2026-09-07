@@ -4,6 +4,18 @@
     <!-- Lyrics are fetched from LRCLIB at runtime. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- The local library. Asked for at the point of use, and refused is a supported
+         state: without it the "On this device" row is simply not in the browse root. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- Playback outlives the activity, which is what a foreground service is for; the
+         wake lock is what keeps it going with the screen off. POST_NOTIFICATIONS is
+         only for the transport notification that service is required to show. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_media_play"
@@ -43,6 +55,14 @@
                 <data android:scheme="dualmusic" android:host="auth" />
             </intent-filter>
         </activity>
+
+        <!-- Our own player, for the files on this device. Not exported: it is started
+             by this app alone, and everything else reaches it through the MediaSession
+             it publishes, which is the same door every other player uses. -->
+        <service
+            android:name=".LocalPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- The only reason this service exists: holding notification-listener access is
              what unlocks MediaSessionManager.getActiveSessions() for a normal app. -->

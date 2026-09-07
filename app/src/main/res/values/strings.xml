@@ -49,4 +49,20 @@
     <string name="n_tracks">%1$d tracks</string>
     <string name="library_needs_auth">Authorise Spotify in the browser to see your library</string>
     <string name="swap">Swap</string>
+
+    <!-- The local library: the one source that needs nobody's permission but the user's. -->
+    <string name="on_this_device">On this device</string>
+    <string name="on_this_device_hint">Music files, no account needed</string>
+    <string name="local_albums">Albums</string>
+    <string name="local_albums_hint">Everything, by record</string>
+    <string name="local_artists">Artists</string>
+    <string name="local_artists_hint">Everything, by who made it</string>
+    <string name="local_tracks">All tracks</string>
+    <string name="local_tracks_hint">Every song on the device</string>
+    <string name="local_unreadable">Could not read the music on this device</string>
+    <string name="local_empty">No music files found on this device</string>
+    <string name="local_needs_permission">Allow access to your music files</string>
+    <string name="local_needs_permission_hint">DualMusic reads them from the device, nothing leaves it</string>
+    <string name="unknown_album">Unknown album</string>
+    <string name="playback_channel">Playback</string>
 </resources>

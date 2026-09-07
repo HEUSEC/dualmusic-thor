@@ -18,12 +18,13 @@ import java.util.concurrent.Executors
 /**
  * Covers for browse and queue rows, from whichever place the row came from.
  *
- * Three sources, because three parts of Spotify hand out three kinds of reference:
+ * Four sources, because each part of the app hands out its own kind of reference:
  * App Remote gives its own image ids, which only its `ImagesApi` resolves; the Web API
- * gives ordinary https URLs; and a MediaSession queue entry gives a `content://` URI
- * into the player's own media provider. A row does not care which it is holding, so the
- * split is decided here, and a queue entry whose provider refuses is crossed with the
- * Web API by its track URI instead.
+ * gives ordinary https URLs; a MediaSession queue entry gives a `content://` URI into
+ * the player's own media provider; and a row from the local library names one of its
+ * own tracks, whose cover MediaStore keeps. A row does not care which it is holding, so
+ * the split is decided here, and a queue entry whose provider refuses is crossed with
+ * the Web API by its track URI instead.
  *
  * Note App Remote's editorial sections carry an *empty* image id rather than none at
  * all — `image=` in the probe's dump — which is why blankness is checked and not just
@@ -62,6 +63,7 @@ class ArtworkLoader(
         }
         when {
             id.startsWith("http") -> loadHttp(id, onBitmap)
+            id.startsWith(LocalLibrary.ART_PREFIX) -> loadFromMediaStore(id, onBitmap)
             id.startsWith("content://") -> loadFromProvider(id, item, onBitmap)
             else -> loadFromSpotify(item, id, onBitmap)
         }
@@ -100,6 +102,26 @@ class ArtworkLoader(
             read = { context.contentResolver.openInputStream(Uri.parse(uri))?.readBytesFully() },
             onFailure = { crossReference(item, onBitmap) },
         )
+    }
+
+    /**
+     * A local row's cover. There is no readable URI to hand out for one — an audio item
+     * opens as audio, not as its art — so the reference names the track and MediaStore
+     * is asked for its thumbnail here, with the file's own embedded picture behind that.
+     */
+    private fun loadFromMediaStore(id: String, onBitmap: (Bitmap) -> Unit) {
+        val trackId = LocalLibrary.artTrackId(id) ?: return
+        executor.execute {
+            val bitmap = LocalLibrary.artwork(context, trackId, TARGET_PX)
+            main.post {
+                if (bitmap == null) {
+                    Log.d(TAG, "no cover for local track $trackId")
+                } else {
+                    cache.put(id, bitmap)
+                    onBitmap(bitmap)
+                }
+            }
+        }
     }
 
     private fun crossReference(item: ListItem, onBitmap: (Bitmap) -> Unit) {
