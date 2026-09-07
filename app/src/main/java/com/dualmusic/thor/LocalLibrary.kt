@@ -47,13 +47,6 @@ class LocalLibrary(private val context: Context) {
         const val ARTISTS_URI = "dualmusic:local:artists"
         const val TRACKS_URI = "dualmusic:local:tracks"
 
-        /**
-         * The row that stands in for the library while READ_MEDIA_AUDIO is missing.
-         * Same idea as the Spotify "connect your library" row: an ask the user can act
-         * on, rather than a feature that is quietly absent.
-         */
-        const val PERMISSION_URI = "dualmusic:local:permission"
-
         const val ALBUM_PREFIX = "dualmusic:local:album:"
         const val ARTIST_PREFIX = "dualmusic:local:artist:"
         const val TRACK_PREFIX = "dualmusic:local:track:"
@@ -172,34 +165,10 @@ class LocalLibrary(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val resolver get() = context.contentResolver
 
+    /** Whether there is a library to open at all, which is only ever the permission. */
+    val isAvailable: Boolean get() = hasPermission(context)
+
     // --- browse ---------------------------------------------------------------
-
-    /**
-     * The row the browse root gains — the library itself once the permission is there,
-     * and the ask for it while it is not.
-     */
-    fun rootNode(): ListItem =
-        if (hasPermission(context)) libraryNode() else permissionNode()
-
-    private fun libraryNode(): ListItem = ListItem(
-        /* id = */ ROOT_URI,
-        /* uri = */ ROOT_URI,
-        /* imageUri = */ null,
-        /* title = */ context.getString(R.string.on_this_device),
-        /* subtitle = */ context.getString(R.string.on_this_device_hint),
-        /* playable = */ false,
-        /* hasChildren = */ true,
-    )
-
-    private fun permissionNode(): ListItem = ListItem(
-        /* id = */ PERMISSION_URI,
-        /* uri = */ PERMISSION_URI,
-        /* imageUri = */ null,
-        /* title = */ context.getString(R.string.local_needs_permission),
-        /* subtitle = */ context.getString(R.string.local_needs_permission_hint),
-        /* playable = */ false,
-        /* hasChildren = */ false,
-    )
 
     /**
      * The children of any local node, delivered on the main thread. An unknown URI is

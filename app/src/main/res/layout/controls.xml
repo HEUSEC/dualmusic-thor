@@ -253,6 +253,94 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- The first thing the panel shows: which library to open. Two sources that
+                 answer to different people - one to Spotify, one to nobody - so the
+                 choice is made once, up front, instead of being a row among their rows. -->
+            <LinearLayout
+                android:id="@+id/sourcePicker"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:baselineAligned="false"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/sourceLocal"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="5dp"
+                    android:background="@drawable/white_card"
+                    android:stateListAnimator="@animator/press_scale"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:padding="14dp">
+
+                    <ImageView
+                        android:layout_width="52dp"
+                        android:layout_height="52dp"
+                        android:src="@drawable/ic_source_local"
+                        android:contentDescription="@null" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/source_local"
+                        android:textColor="@color/ink"
+                        android:textSize="19sp" />
+
+                    <TextView
+                        android:id="@+id/sourceLocalHint"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:gravity="center"
+                        android:text="@string/source_local_hint"
+                        android:textColor="@color/ink_soft"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/sourceSpotify"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginStart="5dp"
+                    android:background="@drawable/white_card"
+                    android:stateListAnimator="@animator/press_scale"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:padding="14dp">
+
+                    <ImageView
+                        android:layout_width="52dp"
+                        android:layout_height="52dp"
+                        android:src="@drawable/ic_source_spotify"
+                        android:contentDescription="@null" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/source_spotify"
+                        android:textColor="@color/ink"
+                        android:textSize="19sp" />
+
+                    <TextView
+                        android:id="@+id/sourceSpotifyHint"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:gravity="center"
+                        android:text="@string/source_spotify_hint"
+                        android:textColor="@color/ink_soft"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- Not connected: the browse area carries the action, transport stays live. -->
             <LinearLayout
                 android:id="@+id/browseAction"

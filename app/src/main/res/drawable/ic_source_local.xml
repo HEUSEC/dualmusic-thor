@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Beamed quavers, drawn rather than imported: this project has no icon pack, and one
+     glyph is not a reason to acquire one. Built from four flat shapes so it stays sharp
+     at the size the source tile draws it, with no strokes to scale badly. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/ink">
+
+    <!-- Left note head -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M7.5,14.9a2.6,2.6 0 1,0 0,5.2a2.6,2.6 0 1,0 0,-5.2z" />
+    <!-- Left stem -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M9.2,5.0h1.3v12.6h-1.3z" />
+    <!-- Right note head -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M16.0,12.9a2.6,2.6 0 1,0 0,5.2a2.6,2.6 0 1,0 0,-5.2z" />
+    <!-- Right stem -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M17.7,3.0h1.3v12.6h-1.3z" />
+    <!-- Beam across the two stems -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M9.2,5.0L19.0,3.0L19.0,5.5L9.2,7.5z" />
+</vector>

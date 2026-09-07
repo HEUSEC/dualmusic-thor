@@ -116,6 +116,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         )
         browser.onAuthoriseRequested = { SpotifyWebAuth.authorize(this) }
         browser.onLocalPermissionRequested = { requestLocalMediaAccess() }
+        // The panel opens on the choice of source, not inside somebody's library.
+        browser.loadRoot()
     }
 
     override fun onStart() {
@@ -125,9 +127,6 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         applyPlan()
         startHub()
         browser.observe { state -> runOnUiThread { browseState = state; renderBrowse() } }
-        // The tree no longer waits for Spotify: the device's own music is in it, and it
-        // is there with no network, no account and no App Remote link.
-        if (browser.isAtRoot) browser.loadRoot()
         connectSpotify()
         handler.post(ticker)
     }
@@ -184,15 +183,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         when (status) {
             is SpotifyRemote.Status.Connected -> {
                 askedForSpotifyConsent = false
-                // Only from the root: a link that comes up while the user is three
-                // levels into an album should not walk them back out of it.
-                if (browser.isAtRoot) browser.loadRoot()
+                // Only if its own root is what is on screen: a link that comes up while
+                // the user is three levels into an album, or looking at their MP3s, must
+                // not walk them out of where they are.
+                browser.refresh(LibraryBrowser.Source.SPOTIFY)
             }
 
             is SpotifyRemote.Status.Failed -> {
-                // Not clear(): Spotify failing costs the app Spotify's rows, not the
-                // device's own, and an empty tree would be a lie about what is available.
-                if (browser.isAtRoot) browser.loadRoot()
+                // Not clear(): Spotify failing costs the app Spotify's rows and nothing
+                // else, and the panel reports it from the link's status either way.
+                browser.refresh(LibraryBrowser.Source.SPOTIFY)
                 // First run on a device: Spotify wants the user to approve us. Ask once,
                 // through our own SSO intent (see SpotifyNativeAuth for why not the SDK).
                 if (!askedForSpotifyConsent) {
@@ -534,6 +534,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         nowPlayingBinder?.setReadingMode(enabled)
     }
 
+    override fun onSourceChosen(source: LibraryBrowser.Source) = browser.choose(source)
+
     override fun onBrowseItemTapped(item: ListItem, position: Int) {
         // A search hit is not part of the browse tree, so the results are the context:
         // playing the hit alone would leave Spotify to invent what comes after it.
@@ -571,12 +573,15 @@ class MainActivity : Activity(), ControlsBinder.Actions {
      */
     private fun requestLocalMediaAccess() {
         if (LocalLibrary.hasPermission(this)) {
-            browser.loadRoot()
+            browser.choose(LibraryBrowser.Source.LOCAL)
             return
         }
         val canAsk = !askedForMediaPermission ||
             shouldShowRequestPermissionRationale(Manifest.permission.READ_MEDIA_AUDIO)
         if (!canAsk) {
+            // The dialog is gone for good, so the settings page is the only way left;
+            // opening it with no explanation would look like the tile did nothing.
+            Toast.makeText(this, R.string.local_needs_permission, Toast.LENGTH_SHORT).show()
             openAppSettings()
             return
         }
@@ -594,8 +599,9 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQUEST_LOCAL_MEDIA) return
-        // Granted or refused, the root row is a different row now: reload it either way.
-        if (browser.isAtRoot) browser.loadRoot()
+        // Granted, the user gets what they tapped the tile for; refused, the picker is
+        // still up and nothing has moved under them.
+        if (LocalLibrary.hasPermission(this)) browser.choose(LibraryBrowser.Source.LOCAL)
     }
 
     private fun openAppSettings() {

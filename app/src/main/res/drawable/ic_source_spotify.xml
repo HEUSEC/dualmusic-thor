@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spotify's mark, in its brand green, used to name the service this app connects to.
+     Drawn geometrically - a disc and three arcs - rather than shipped as their asset.
+     Note their brand guidelines govern the real logo: a build meant for distribution
+     should use the official file at the size and clear space they specify. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:fillColor="#FF1DB954"
+        android:pathData="M12,2a10,10 0 1,0 0,20a10,10 0 1,0 0,-20z" />
+
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M6.6,8.9c3.7,-1.1 7.8,-0.7 11.0,1.2" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round"
+        android:pathData="M7.4,12.3c3.0,-0.9 6.5,-0.5 9.1,1.0" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M8.1,15.5c2.4,-0.7 5.1,-0.4 7.2,0.8" />
+</vector>

@@ -262,9 +262,10 @@ adb shell cmd notification allow_listener com.dualmusic.thor/com.dualmusic.thor.
 ```
 
 `READ_MEDIA_AUDIO` is what the local source needs, and it is asked for where it is used:
-until it is granted, the row at the root of the browse tree is the ask itself rather than
-the library. Refused twice, Android stops showing the dialog, so from then on that row
-opens the app's settings page instead. `POST_NOTIFICATIONS` rides along with the request
+tapping the **MP3** tile is the moment the user has said they want their files, which is
+a better place to ask than a row they were not looking at. Refused, the picker simply
+stays up; refused twice, Android stops showing the dialog at all, so from then on the
+tile says why and opens the app's settings page instead. `POST_NOTIFICATIONS` rides along with the request
 because the player is a foreground service and its transport notification is what that
 service is required to show; refusing it costs the notification, not the music.
 
@@ -280,9 +281,15 @@ adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
   cropped and the card still takes the record's colour. Thumbnails in the browse list
   are real Spotify cover art via `ImagesApi`, and rows whose item has no image simply
   have no thumbnail rather than an empty grey square.
-- **Two densities in one list.** The top level of the browse tree is a two-column grid of
-  glossy tiles; deeper levels are single-column white rows. Same `GridView`, switching
-  `numColumns` and the item layout, so scroll position and recycling behave normally.
+- **The panel opens on a choice, not inside a library.** The two sources answer to
+  different people — one to Spotify, whose rules changed twice this year, and one to
+  nobody at all — and merging them into a single root made that invisible: the device's
+  own music was a row among Spotify's rows. So the tree starts one level higher, on two
+  tiles with an icon each, and back from a source's root returns there. It is the
+  control panel that draws it, which on the default layout is the lower screen.
+  Both icons are drawn as vectors like everything else here; the Spotify mark is their
+  trademark, used to name the service this app connects to, and a build meant for
+  distribution should use their official asset under their brand guidelines.
 - **Degradation is layout, never apology.** No artwork turns the card into a flat mint
   gradient (no placeholder glyph); no lyrics removes the whole panel and the artwork card
   takes the full width (no "no lyrics" message); no album or year drops that chip and the

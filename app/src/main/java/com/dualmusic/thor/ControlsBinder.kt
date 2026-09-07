@@ -39,6 +39,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onOpenSearch()
         fun onSearch(query: String)
         fun onBrowseItemTapped(item: ListItem, position: Int)
+
+        fun onSourceChosen(source: LibraryBrowser.Source)
         fun onBrowseBack()
         fun loadArtwork(item: ListItem, onBitmap: (Bitmap) -> Unit)
     }
@@ -72,6 +74,9 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private val btnSearch: View = root.findViewById(R.id.btnSearch)
     private val searchInput: EditText = root.findViewById(R.id.searchInput)
     private val headerTitles: View = root.findViewById(R.id.headerTitles)
+    private val sourcePicker: View = root.findViewById(R.id.sourcePicker)
+    private val sourceLocal: View = root.findViewById(R.id.sourceLocal)
+    private val sourceSpotify: View = root.findViewById(R.id.sourceSpotify)
 
     private val adapter = BrowseAdapter(LayoutInflater.from(root.context), actions)
     private var readingMode = false
@@ -92,6 +97,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnQueue.setOnClickListener { actions.onToggleQueue() }
         btnSpotify.setOnClickListener { actions.onConnectSpotify() }
         browseActionButton.setOnClickListener { actions.onConnectSpotify() }
+        sourceLocal.setOnClickListener { actions.onSourceChosen(LibraryBrowser.Source.LOCAL) }
+        sourceSpotify.setOnClickListener { actions.onSourceChosen(LibraryBrowser.Source.SPOTIFY) }
         btnBrowseBack.setOnClickListener { actions.onBrowseBack() }
         nearTrackTap.setOnClickListener { actions.onToggleLyrics() }
         btnSearch.setOnClickListener {
@@ -233,6 +240,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnSpotify.visibility = View.GONE
         browseMessage.visibility = View.GONE
         browseAction.visibility = View.GONE
+        sourcePicker.visibility = View.GONE
         browseList.visibility = View.VISIBLE
         btnBrowseBack.isEnabled = true
         btnBrowseBack.alpha = 1f
@@ -251,6 +259,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
             browseMessage.text = ""
             browseMessage.visibility = View.GONE
             browseAction.visibility = View.GONE
+            sourcePicker.visibility = View.GONE
             browseList.visibility = View.VISIBLE
         } else {
             searchInput.setText("")
@@ -366,6 +375,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
             browseList.visibility = View.GONE
             browseMessage.visibility = View.GONE
             browseAction.visibility = View.GONE
+            sourcePicker.visibility = View.GONE
             btnSpotify.visibility = View.GONE
             btnBrowseBack.isEnabled = true
             btnBrowseBack.alpha = 1f
@@ -376,26 +386,45 @@ class ControlsBinder(root: View, private val actions: Actions) {
         }
         if (readingPanel.visibility == View.VISIBLE) Motion.swap(readingPanel, browseList)
 
-        // Only shown when it is an action; a badge saying "connected" is not one.
-        btnSpotify.visibility = if (connected) View.GONE else View.VISIBLE
+        // Nothing chosen yet: the picker owns the area, and the header carries no
+        // library name because no library is open.
+        if (state?.picker != false) {
+            if (sourcePicker.visibility != View.VISIBLE) Motion.swap(browseList, sourcePicker)
+            browseList.visibility = View.GONE
+            browseMessage.visibility = View.GONE
+            browseAction.visibility = View.GONE
+            btnSpotify.visibility = View.GONE
+            btnBrowseBack.isEnabled = false
+            btnBrowseBack.alpha = 0.35f
+            browseTitle.text = context.getString(R.string.choose_source)
+            browseCrumb.visibility = View.GONE
+            adapter.submit(emptyList())
+            return
+        }
+        if (sourcePicker.visibility == View.VISIBLE) Motion.swap(sourcePicker, browseList)
+
+        val browsingSpotify = state.source == LibraryBrowser.Source.SPOTIFY
+
+        // Only shown when it is an action, and only where it is one: the connect button
+        // has nothing to do with a folder of MP3s.
+        btnSpotify.visibility = if (browsingSpotify && !connected) View.VISIBLE else View.GONE
         btnSpotify.text = context.getString(R.string.connect)
 
-        val atRoot = state == null || !state.canGoBack
-        val canGoBack = !atRoot
-        btnBrowseBack.isEnabled = canGoBack
-        btnBrowseBack.alpha = if (canGoBack) 1f else 0.35f
-        browseTitle.text = when {
-            atRoot -> context.getString(R.string.browse_root)
-            else -> state?.title.orEmpty()
-        }
-        val crumb = state?.crumb.orEmpty()
+        val atRoot = !state.canGoBack
+        btnBrowseBack.isEnabled = true
+        btnBrowseBack.alpha = 1f
+        browseTitle.text = state.title.takeIf { it.isNotEmpty() }
+            ?: context.getString(
+                if (browsingSpotify) R.string.browse_root else R.string.on_this_device
+            )
+        val crumb = state.crumb
         browseCrumb.text = crumb
         browseCrumb.visibility = if (crumb.isNotEmpty()) View.VISIBLE else View.GONE
 
-        // Spotify being down is only worth a whole screen when there is nothing else to
-        // show. The device's own music is in this tree too, and it does not care whether
-        // Spotify answered: rows win over a status message.
-        if (!connected && state?.items.isNullOrEmpty()) {
+        // A Spotify outage is worth the whole area only while Spotify is what is being
+        // browsed, and only when it left nothing to show. It says nothing about the
+        // device's own music, which is now a tree of its own.
+        if (browsingSpotify && !connected && state.items.isEmpty()) {
             adapter.submit(emptyList())
             browseList.visibility = View.GONE
             browseMessage.visibility = View.GONE
@@ -411,12 +440,15 @@ class ControlsBinder(root: View, private val actions: Actions) {
         browseAction.visibility = View.GONE
 
         val message: String? = when {
-            state == null || state.loading -> context.getString(R.string.spotify_loading)
+            state.loading -> context.getString(R.string.spotify_loading)
             state.error != null -> state.error
+            // An empty library and an empty playlist are different absences.
+            state.items.isEmpty() && !browsingSpotify && atRoot ->
+                context.getString(R.string.local_empty)
             state.items.isEmpty() -> context.getString(R.string.spotify_empty)
             else -> null
         }
-        adapter.submit(if (message == null && state != null) rowsOf(state.items) else emptyList())
+        adapter.submit(if (message == null) rowsOf(state.items) else emptyList())
         browseMessage.text = message.orEmpty()
         browseMessage.visibility = if (message == null) View.GONE else View.VISIBLE
         browseList.visibility = if (message == null) View.VISIBLE else View.GONE

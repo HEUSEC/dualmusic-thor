@@ -20,6 +20,12 @@ import com.spotify.protocol.types.ListItem
  * it rather than the whole screen. Without a Web API token the old tree is still the
  * root, which is better than an empty one.
  *
+ * Above all of it sits the choice of *which* source, because the two answer to different
+ * people: one to Spotify, whose rules changed twice this year, and one to nobody at all.
+ * Merging them into a single root made that invisible - the device's own music was a row
+ * among Spotify's rows - so the tree now starts one level higher, at [Source], and the
+ * panel opens there instead of inside somebody's library.
+ *
  * Items either have children (open them) or are playable (play them); some are both, in
  * which case a tap opens, because opening is the recoverable choice.
  */
@@ -31,6 +37,9 @@ class LibraryBrowser(
     private val authoriseSubtitle: String = "Your playlists and saved songs, in one step",
 ) {
 
+    /** Where the rows on screen come from. Null anywhere below means "not chosen yet". */
+    enum class Source { LOCAL, SPOTIFY }
+
     data class State(
         val title: String,
         /** The levels above the current one, for the header's breadcrumb. */
@@ -39,6 +48,16 @@ class LibraryBrowser(
         val canGoBack: Boolean,
         val loading: Boolean,
         val error: String?,
+        /**
+         * True when nothing has been chosen yet and the panel should draw the picker.
+         * The item list is empty then: the choice is two tiles, not two rows.
+         */
+        val picker: Boolean = false,
+        /**
+         * Which library is being browsed, so the panel knows whose failure is worth
+         * reporting. A Spotify outage says nothing about a folder of MP3s.
+         */
+        val source: Source? = null,
     )
 
     private companion object {
@@ -55,6 +74,7 @@ class LibraryBrowser(
     }
 
     private val stack = ArrayDeque<ListItem>()
+    private var source: Source? = null
     private var items: List<ListItem> = emptyList()
     private var loading = false
     private var error: String? = null
@@ -73,7 +93,8 @@ class LibraryBrowser(
      */
     var onLocalPermissionRequested: (() -> Unit)? = null
 
-    val isAtRoot: Boolean get() = stack.isEmpty()
+    /** True while the picker is up: nothing chosen, nothing to go back to. */
+    val isAtSourcePicker: Boolean get() = source == null
 
     fun observe(listener: (State) -> Unit) {
         this.listener = listener
@@ -88,9 +109,41 @@ class LibraryBrowser(
         publish()
     }
 
+    /** Back to the choice itself, which is where the panel opens. */
     fun loadRoot() {
+        source = null
+        stack.clear()
+        items = emptyList()
+        loading = false
+        error = null
+        publish()
+    }
+
+    /**
+     * Opens one source's library.
+     *
+     * The local one is the point at which READ_MEDIA_AUDIO is worth asking for: the user
+     * has just said they want their files, which is a better moment than a row offering
+     * it among rows they were not looking at. Refused, the picker simply stays up.
+     */
+    fun choose(source: Source) {
+        if (source == Source.LOCAL && local?.isAvailable == false) {
+            onLocalPermissionRequested?.invoke()
+            return
+        }
+        this.source = source
         stack.clear()
         load(null)
+    }
+
+    /**
+     * Reloads the current level if it is [source]'s own root. Used when a source becomes
+     * usable while it is already on screen - Spotify finishing its handshake, the media
+     * permission being granted - without walking a user who has since browsed deeper
+     * back out of where they are.
+     */
+    fun refresh(source: Source) {
+        if (this.source == source && stack.isEmpty()) load(null)
     }
 
     /** A tap on a row: descend when possible, otherwise play it. */
@@ -101,8 +154,6 @@ class LibraryBrowser(
             load(item)
         } else if (item.uri == SpotifyWebApi.AUTHORISE_URI) {
             onAuthoriseRequested?.invoke()
-        } else if (item.uri == LocalLibrary.PERMISSION_URI) {
-            onLocalPermissionRequested?.invoke()
         } else if (item.playable) {
             play(item, if (position >= 0) position else items.indexOf(item))
         }
@@ -153,10 +204,17 @@ class LibraryBrowser(
 
     /** True when it consumed the back press. */
     fun back(): Boolean {
-        if (stack.isEmpty()) return false
-        stack.removeLast()
-        load(stack.lastOrNull())
-        return true
+        if (stack.isNotEmpty()) {
+            stack.removeLast()
+            load(stack.lastOrNull())
+            return true
+        }
+        // The top of a source's tree is not the top of the app: the choice is above it.
+        if (source != null) {
+            loadRoot()
+            return true
+        }
+        return false
     }
 
     /**
@@ -184,7 +242,16 @@ class LibraryBrowser(
 
         val library = web?.takeIf { it.isAuthorised() }
         when {
-            item == null -> loadRootItems(onItems, onError)
+            item == null -> when (source) {
+                Source.LOCAL ->
+                    local?.children(LocalLibrary.ROOT_URI, onItems, onError)
+                        ?: onError("no local library")
+
+                Source.SPOTIFY -> loadSpotifyRoot(onItems, onError)
+
+                // Nothing chosen: the picker owns the screen and there is no list.
+                null -> onItems(emptyList())
+            }
 
             LocalLibrary.isLocal(item.uri) ->
                 local?.children(item.uri, onItems, onError) ?: onError("no local library")
@@ -211,36 +278,23 @@ class LibraryBrowser(
     }
 
     /**
-     * The root: the device's own music first, then whatever Spotify will lend us.
-     *
-     * The order is deliberate. The local row is the one that is always there, so it is
-     * the one that is always first; Spotify's part of the root can fail, and a failure
-     * that leaves the tree with rows in it is not an error worth painting over them —
-     * the header's connect button already says the link is down.
-     *
-     * Without a Web API token the Spotify part is its recommendations, which is not
-     * nothing but is not the user's library either, so a row offering the consent goes
-     * in front of them. With no Spotify at all, the files on the device are the whole
-     * tree, and that is a working app rather than a degraded one.
+     * Spotify's own root. Without a Web API token this is its recommendations, which is
+     * not nothing but is not the user's library either, so a row offering the consent
+     * goes in front of them.
      */
-    private fun loadRootItems(onItems: (List<ListItem>) -> Unit, onError: (String) -> Unit) {
-        val rows = listOfNotNull(local?.rootNode())
+    private fun loadSpotifyRoot(onItems: (List<ListItem>) -> Unit, onError: (String) -> Unit) {
         val library = web?.takeIf { it.isAuthorised() }
-        val onSpotifyError: (String) -> Unit = { reason ->
-            if (rows.isEmpty()) onError(reason) else {
-                Log.i(TAG, "Spotify's part of the root failed ($reason); keeping the local one")
-                onItems(rows)
-            }
-        }
         when {
-            library != null -> library.library({ onItems(rows + it) }, onSpotifyError)
+            library != null -> library.library(onItems, onError)
 
             remote.isConnected -> remote.loadRoot(
-                onItems = { loaded -> onItems(rows + authoriseNode() + loaded) },
-                onError = onSpotifyError,
+                onItems = { loaded -> onItems(listOf(authoriseNode()) + loaded) },
+                onError = onError,
             )
 
-            else -> onItems(rows)
+            // Not connected yet. The panel reports that from the link's own status
+            // rather than from an empty tree, so this is not an error.
+            else -> onItems(emptyList())
         }
     }
 
@@ -272,12 +326,15 @@ class LibraryBrowser(
     private fun publish() {
         listener?.invoke(
             State(
-                title = stack.lastOrNull()?.title ?: "Spotify",
+                title = stack.lastOrNull()?.title.orEmpty(),
                 crumb = stack.dropLast(1).joinToString(" / ") { it.title.orEmpty() },
                 items = items,
-                canGoBack = stack.isNotEmpty(),
+                // A source's own root still has somewhere above it: the choice.
+                canGoBack = source != null,
                 loading = loading,
                 error = error,
+                picker = source == null,
+                source = source,
             )
         )
     }

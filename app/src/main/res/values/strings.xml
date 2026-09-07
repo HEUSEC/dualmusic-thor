@@ -63,6 +63,13 @@
     <string name="local_empty">No music files found on this device</string>
     <string name="local_needs_permission">Allow access to your music files</string>
     <string name="local_needs_permission_hint">Read from the device; covers are looked up online</string>
+
+    <!-- The source picker, which is the first thing the control panel shows. -->
+    <string name="choose_source">Play from</string>
+    <string name="source_local">MP3</string>
+    <string name="source_local_hint">On this device</string>
+    <string name="source_spotify">Spotify</string>
+    <string name="source_spotify_hint">Your library</string>
     <string name="unknown_album">Unknown album</string>
     <string name="playback_channel">Playback</string>
 </resources>
