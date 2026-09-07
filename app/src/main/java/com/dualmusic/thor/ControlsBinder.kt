@@ -31,6 +31,10 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onNext()
         fun onSeekTo(positionMs: Long)
         fun onToggleQueue()
+
+        fun onToggleShuffle()
+
+        fun onCycleRepeat()
         fun onQueueItemTapped(entry: MediaHub.QueueEntry)
         fun onSelectSession(session: MediaHub.SessionRef)
         fun onGrantAccess()
@@ -60,6 +64,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private val btnPlayPause: ImageButton = root.findViewById(R.id.btnPlayPause)
     private val btnNext: ImageButton = root.findViewById(R.id.btnNext)
     private val btnQueue: ImageButton = root.findViewById(R.id.btnQueue)
+    private val btnShuffle: ImageButton = root.findViewById(R.id.btnShuffle)
+    private val btnRepeat: ImageButton = root.findViewById(R.id.btnRepeat)
 
     private val nearTrackTap: View = root.findViewById(R.id.nearTrackTap)
     private val readingSpacer: View = root.findViewById(R.id.nearReadingSpacer)
@@ -103,6 +109,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnQueue.setOnClickListener { actions.onToggleQueue() }
         btnSpotify.setOnClickListener { actions.onConnectSpotify() }
         browseActionButton.setOnClickListener { actions.onConnectSpotify() }
+        btnShuffle.setOnClickListener { actions.onToggleShuffle() }
+        btnRepeat.setOnClickListener { actions.onCycleRepeat() }
         sourceLocal.setOnClickListener { actions.onSourceChosen(LibraryBrowser.Source.LOCAL) }
         sourceSpotify.setOnClickListener { actions.onSourceChosen(LibraryBrowser.Source.SPOTIFY) }
         btnBrowseBack.setOnClickListener { actions.onBrowseBack() }
@@ -191,6 +199,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
             Motion.refresh(nearTrackTap, Motion.NORMAL, rise = dp(6).toFloat())
             Motion.refresh(bigArt, Motion.SLOW)
         }
+        bindModes(snapshot)
         bindSessions(snapshot)
         updateProgress()
     }
@@ -207,6 +216,31 @@ class ControlsBinder(root: View, private val actions: Actions) {
         if (queueMode) {
             if (hasQueue) showQueue(snapshot.queue, snapshot.queueTitle) else actions.onToggleQueue()
         }
+    }
+
+    /**
+     * Shuffle and repeat, on exactly the same terms as the queue button: there when the
+     * player publishes them and absent when it does not. Only a session this app owns
+     * can report them, so on every other player these are simply not on screen — which
+     * is better than a switch that cannot show its own state.
+     */
+    private fun bindModes(snapshot: MediaHub.Snapshot) {
+        val modes = snapshot.modes
+        val visible = if (modes == null) View.GONE else View.VISIBLE
+        btnShuffle.visibility = visible
+        btnRepeat.visibility = visible
+        if (modes == null) return
+
+        btnShuffle.imageTintList = tint(if (modes.shuffle) R.color.accent else R.color.ink)
+        // Repeat has three states and two of them are "on", so the icon carries the
+        // difference and the colour only says whether it is doing anything.
+        btnRepeat.setImageResource(
+            if (modes.repeat == LocalPlaybackService.REPEAT_ONE) R.drawable.ic_repeat_one
+            else R.drawable.ic_repeat
+        )
+        btnRepeat.imageTintList = tint(
+            if (modes.repeat == LocalPlaybackService.REPEAT_OFF) R.color.ink else R.color.accent
+        )
     }
 
     private fun tint(colorRes: Int) =

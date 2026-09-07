@@ -18,10 +18,12 @@ import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.ResultReceiver
 import android.util.Log
 import java.util.concurrent.Executors
 
@@ -53,6 +55,26 @@ class LocalPlaybackService : Service() {
         const val ACTION_NEXT = "com.dualmusic.thor.NEXT"
         const val ACTION_PREVIOUS = "com.dualmusic.thor.PREVIOUS"
         const val ACTION_STOP = "com.dualmusic.thor.STOP"
+
+        /**
+         * Shuffle and repeat are not in the framework's session API at all — not on
+         * PlaybackState, not on MediaController, not on MediaSession.Callback; they
+         * exist only in the compat library, and even there a foreign session's mode
+         * cannot be read back. Which is why this app has never shown them.
+         *
+         * A session we own is a different case. The state travels in the playback
+         * state's own extras, which *is* framework, and the toggles come back through
+         * `sendCommand`. So the mode is readable because it is ours to publish, and any
+         * player that does not publish it still gets no buttons.
+         */
+        const val COMMAND_SET_SHUFFLE = "com.dualmusic.thor.SET_SHUFFLE"
+        const val COMMAND_SET_REPEAT = "com.dualmusic.thor.SET_REPEAT"
+        const val EXTRA_SHUFFLE = "shuffle"
+        const val EXTRA_REPEAT = "repeat"
+
+        const val REPEAT_OFF = 0
+        const val REPEAT_ALL = 1
+        const val REPEAT_ONE = 2
 
         private const val EXTRA_IDS = "ids"
         private const val EXTRA_INDEX = "index"
@@ -95,7 +117,17 @@ class LocalPlaybackService : Service() {
 
     private var player: MediaPlayer? = null
     private var queue: List<LocalLibrary.Track> = emptyList()
-    private var index = 0
+
+    /**
+     * The order the queue is played in, as positions into [queue], and where we are in
+     * that order. Keeping the queue itself in its natural order is what lets the list
+     * on screen stay the album while the playing order is something else.
+     */
+    private var order: List<Int> = emptyList()
+    private var cursor = 0
+    private var shuffle = false
+    private var repeat = REPEAT_OFF
+
     private var prepared = false
     private var playWhenReady = true
 
@@ -160,6 +192,13 @@ class LocalPlaybackService : Service() {
                 override fun onSkipToPrevious() = previous()
                 override fun onSeekTo(pos: Long) = seekTo(pos)
                 override fun onSkipToQueueItem(id: Long) = playAt(id.toInt())
+
+                override fun onCommand(command: String, args: Bundle?, cb: ResultReceiver?) {
+                    when (command) {
+                        COMMAND_SET_SHUFFLE -> setShuffle(args?.getBoolean(EXTRA_SHUFFLE) == true)
+                        COMMAND_SET_REPEAT -> setRepeat(args?.getInt(EXTRA_REPEAT) ?: REPEAT_OFF)
+                    }
+                }
             })
             isActive = true
         }
@@ -204,6 +243,9 @@ class LocalPlaybackService : Service() {
 
     // --- queue ----------------------------------------------------------------
 
+    /** The queue position playing now, which is wherever the order currently points. */
+    private val index: Int get() = order.getOrElse(cursor) { 0 }
+
     private fun load(ids: LongArray, at: Int) {
         worker.execute {
             val tracks = library.tracksByIds(ids)
@@ -214,6 +256,7 @@ class LocalPlaybackService : Service() {
                     return@post
                 }
                 queue = tracks
+                reorder(startingAt = at.coerceIn(0, tracks.lastIndex))
                 publishQueue()
                 playAt(at.coerceIn(0, tracks.lastIndex))
             }
@@ -242,7 +285,7 @@ class LocalPlaybackService : Service() {
 
     private fun playAt(position: Int) {
         val track = queue.getOrNull(position) ?: return
-        index = position
+        cursor = order.indexOf(position).coerceAtLeast(0)
         prepared = false
         playWhenReady = true
 
@@ -260,7 +303,7 @@ class LocalPlaybackService : Service() {
                 prepared = true
                 if (playWhenReady) play() else publishState()
             }
-            setOnCompletionListener { skip(1) }
+            setOnCompletionListener { onTrackFinished() }
             setOnErrorListener { _, what, extra ->
                 // A single unreadable file must not end the record.
                 Log.w(TAG, "player error $what/$extra on ${track.title}; skipping")
@@ -280,14 +323,62 @@ class LocalPlaybackService : Service() {
         publishState()
     }
 
+    /**
+     * Moves along the play order, not along the queue: with shuffle on those are two
+     * different things. Running off the end is a stop unless repeat says otherwise —
+     * nobody gets a loop they did not ask for.
+     */
     private fun skip(delta: Int) {
-        val next = index + delta
-        if (next !in queue.indices) {
-            // The end of the queue is a stop, not a wrap: nobody asked for a loop.
-            stopPlayback()
+        val next = cursor + delta
+        when {
+            next in order.indices -> playAt(order[next])
+            repeat == REPEAT_ALL && order.isNotEmpty() ->
+                playAt(order[((next % order.size) + order.size) % order.size])
+            else -> stopPlayback()
+        }
+    }
+
+    /**
+     * The end of a track, which is the only place repeat-one applies: pressing next is
+     * an instruction to move, and honouring a repeat there would ignore it.
+     */
+    private fun onTrackFinished() {
+        if (repeat == REPEAT_ONE) {
+            seekTo(0)
+            play()
             return
         }
-        playAt(next)
+        skip(1)
+    }
+
+    /**
+     * Rebuilds the play order. Shuffled, the track playing now stays at the front so
+     * that turning shuffle on does not interrupt it, and what changes is only what
+     * comes after.
+     */
+    private fun reorder(startingAt: Int = index) {
+        val positions = queue.indices.toList()
+        order = if (!shuffle || positions.isEmpty()) {
+            positions
+        } else {
+            listOf(startingAt) + positions.filter { it != startingAt }.shuffled()
+        }
+        cursor = order.indexOf(startingAt).coerceAtLeast(0)
+    }
+
+    private fun setShuffle(enabled: Boolean) {
+        if (shuffle == enabled) return
+        shuffle = enabled
+        reorder()
+        publishState()
+    }
+
+    private fun setRepeat(mode: Int) {
+        repeat = when (mode) {
+            REPEAT_ALL, REPEAT_ONE -> mode
+            else -> REPEAT_OFF
+        }
+        publishState()
     }
 
     /** Back to the start of the song first, and only then to the one before it. */
@@ -329,7 +420,8 @@ class LocalPlaybackService : Service() {
         releasePlayer()
         abandonFocus()
         queue = emptyList()
-        index = 0
+        order = emptyList()
+        cursor = 0
         session.setQueue(null)
         session.setMetadata(null)
         session.isActive = false
@@ -473,6 +565,9 @@ class LocalPlaybackService : Service() {
             player != null -> PlaybackState.STATE_PAUSED
             else -> PlaybackState.STATE_STOPPED
         }
+        // Repeat makes both ends of the queue reachable, so the transport keeps its
+        // skips rather than greying one out at the last track.
+        val looping = repeat != REPEAT_OFF && order.isNotEmpty()
         session.setPlaybackState(
             PlaybackState.Builder()
                 .setActions(
@@ -482,11 +577,20 @@ class LocalPlaybackService : Service() {
                         PlaybackState.ACTION_STOP or
                         PlaybackState.ACTION_SEEK_TO or
                         PlaybackState.ACTION_SKIP_TO_QUEUE_ITEM or
-                        (if (index > 0) PlaybackState.ACTION_SKIP_TO_PREVIOUS else 0L) or
-                        (if (index < queue.lastIndex) PlaybackState.ACTION_SKIP_TO_NEXT else 0L)
+                        (if (looping || cursor > 0) PlaybackState.ACTION_SKIP_TO_PREVIOUS else 0L) or
+                        (if (looping || cursor < order.lastIndex) PlaybackState.ACTION_SKIP_TO_NEXT else 0L)
                 )
                 .setActiveQueueItemId(index.toLong())
                 .setState(state, position, if (playing) 1f else 0f)
+                // The two modes the framework has no field for. A player that does not
+                // put them here is a player with no modes to show, which is every other
+                // one on the device.
+                .setExtras(
+                    Bundle().apply {
+                        putBoolean(EXTRA_SHUFFLE, shuffle)
+                        putInt(EXTRA_REPEAT, repeat)
+                    }
+                )
                 .build()
         )
     }

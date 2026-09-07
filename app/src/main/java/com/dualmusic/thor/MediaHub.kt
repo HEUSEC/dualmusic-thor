@@ -9,6 +9,7 @@ import android.media.session.MediaController
 import android.media.session.MediaSession
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 
@@ -67,6 +68,18 @@ class MediaHub(private val context: Context) {
         val adjustable: Boolean,
     )
 
+    /**
+     * Shuffle and repeat, for the one kind of session that can report them.
+     *
+     * The framework's session API has no field for either — not on PlaybackState, not
+     * on MediaController, not on TransportControls — so a player's mode is normally
+     * unknowable, and a switch that cannot show its own state is worse than no switch.
+     * Our own player publishes them in the playback state's extras instead, which is
+     * how they become readable without leaving the framework. Null for everybody else,
+     * which is the honest answer for everybody else.
+     */
+    data class Modes(val shuffle: Boolean, val repeat: Int)
+
     data class Track(
         /**
          * The player's own id for this track, when it publishes one. Ours is a
@@ -112,6 +125,7 @@ class MediaHub(private val context: Context) {
         val queue: List<QueueEntry> = emptyList(),
         val queueTitle: String? = null,
         val volume: Volume? = null,
+        val modes: Modes? = null,
     )
 
     private val sessionManager: MediaSessionManager =
@@ -186,6 +200,26 @@ class MediaHub(private val context: Context) {
 
     fun playQueueItem(id: Long) {
         activeController()?.transportControls?.skipToQueueItem(id)
+    }
+
+    /**
+     * The two modes travel as a command rather than as a transport control, because the
+     * framework has no transport control for them. Only our own player listens.
+     */
+    fun setShuffle(enabled: Boolean) {
+        activeController()?.sendCommand(
+            LocalPlaybackService.COMMAND_SET_SHUFFLE,
+            Bundle().apply { putBoolean(LocalPlaybackService.EXTRA_SHUFFLE, enabled) },
+            null,
+        )
+    }
+
+    fun setRepeat(mode: Int) {
+        activeController()?.sendCommand(
+            LocalPlaybackService.COMMAND_SET_REPEAT,
+            Bundle().apply { putInt(LocalPlaybackService.EXTRA_REPEAT, mode) },
+            null,
+        )
     }
 
     /**
@@ -326,6 +360,7 @@ class MediaHub(private val context: Context) {
             queue = controller?.let { queueOf(it) }.orEmpty(),
             queueTitle = controller?.queueTitle?.toString()?.takeIf { it.isNotBlank() },
             volume = controller?.let { volumeOf(it) },
+            modes = controller?.let { modesOf(it) },
         )
     }
 
@@ -352,6 +387,16 @@ class MediaHub(private val context: Context) {
                 trackUri = description.mediaId,
             )
         }
+    }
+
+    /** Only a session that publishes both keys is claiming to have modes at all. */
+    private fun modesOf(controller: MediaController): Modes? {
+        val extras = controller.playbackState?.extras ?: return null
+        if (!extras.containsKey(LocalPlaybackService.EXTRA_SHUFFLE)) return null
+        return Modes(
+            shuffle = extras.getBoolean(LocalPlaybackService.EXTRA_SHUFFLE),
+            repeat = extras.getInt(LocalPlaybackService.EXTRA_REPEAT),
+        )
     }
 
     private fun volumeOf(controller: MediaController): Volume? {

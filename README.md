@@ -399,11 +399,21 @@ adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
 - **One density in the list.** Two column-widths and two row layouts were a design idea,
   not a reading aid, on a panel this size: every level is now one column of 62dp rows
   with a 44dp cover.
-- **Shuffle and repeat are not in the platform API at all.** Not on `PlaybackState`, not
-  on `MediaController`, not on `TransportControls` — they exist only in
-  `MediaSessionCompat`, and from a token obtained through `getActiveSessions()` the
-  compat layer can send `setRepeatMode` but never read the mode back. A switch that
-  cannot show its own state is worse than no switch, so there is none.
+- **Shuffle and repeat are not in the platform API at all** — verified against
+  `android-34/android.jar`: no `repeat` or `shuffle` member on `PlaybackState`,
+  `MediaController`, `TransportControls`, `MediaController.Callback`, `MediaSession` or
+  `MediaSession.Callback`. They exist only in `MediaSessionCompat`, and from a token
+  obtained through `getActiveSessions()` the compat layer can send `setRepeatMode` but
+  never read the mode back. A switch that cannot show its own state is worse than no
+  switch, so for every other player on the device there is still none.
+  A session this app owns is a different case, and needs no compat layer to fix it: the
+  local player publishes both modes in the playback state's own **extras**, which is
+  framework, and takes the toggles back through `sendCommand`. So the mode is readable
+  because it is ours to publish, and the two buttons appear on exactly the terms the
+  queue button already used — there when the player reports them, absent when it does
+  not. Shuffle reorders play without reordering the list on screen, keeping the current
+  track at the front so turning it on never interrupts anything; repeat-one applies at
+  the end of a track and not to a pressed skip, since a press is an instruction to move.
 - **A track is played where it was tapped.** `play(trackUri)` starts that track with no
   context, so Spotify follows it with autoplay and the rest of the playlist never comes:
   the queue was simply wrong. A collection is now started at the tapped index instead

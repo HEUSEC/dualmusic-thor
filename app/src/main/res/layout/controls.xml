@@ -98,6 +98,34 @@
                 android:contentDescription="@string/search" />
 
             <ImageButton
+                android:id="@+id/btnShuffle"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_shuffle"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:visibility="gone"
+                android:contentDescription="@string/shuffle" />
+
+            <ImageButton
+                android:id="@+id/btnRepeat"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_repeat"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:visibility="gone"
+                android:contentDescription="@string/repeat" />
+
+            <ImageButton
                 android:id="@+id/btnQueue"
                 android:stateListAnimator="@animator/press_scale"
                 android:layout_width="45dp"

@@ -450,6 +450,20 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     override fun onToggleQueue() = setQueueMode(!queueMode)
 
+    override fun onToggleShuffle() {
+        hub.setShuffle(lastSnapshot?.modes?.shuffle != true)
+    }
+
+    /** Off, then everything, then this one track: the order people expect. */
+    override fun onCycleRepeat() {
+        val next = when (lastSnapshot?.modes?.repeat) {
+            LocalPlaybackService.REPEAT_OFF -> LocalPlaybackService.REPEAT_ALL
+            LocalPlaybackService.REPEAT_ALL -> LocalPlaybackService.REPEAT_ONE
+            else -> LocalPlaybackService.REPEAT_OFF
+        }
+        hub.setRepeat(next)
+    }
+
     override fun onQueueItemTapped(entry: MediaHub.QueueEntry) = hub.playQueueItem(entry.id)
 
     private fun setQueueMode(enabled: Boolean) {
