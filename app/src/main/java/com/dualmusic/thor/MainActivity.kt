@@ -550,6 +550,22 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         artwork.load(item, onBitmap)
 
     /**
+     * A local row whose title is only its file name is worth looking up: `duvet-boa.mp3`
+     * is a song with a name, and the list is where the user reads it. Every other row is
+     * left exactly as its source described it.
+     */
+    override fun loadName(item: ListItem, onName: (String, String?) -> Unit) {
+        val trackId = item.uri.takeIf { it.startsWith(LocalLibrary.TRACK_PREFIX) }
+            ?.removePrefix(LocalLibrary.TRACK_PREFIX)
+            ?.toLongOrNull()
+            ?: return
+        localMetadata.tagsForTrack(trackId) { tags ->
+            val title = tags?.title ?: return@tagsForTrack
+            onName(title, tags.artist ?: item.subtitle)
+        }
+    }
+
+    /**
      * The arrow in the header is the same key as the system's back: it closes search,
      * then the queue, then reading mode, then walks up the tree. Wiring it to the browse
      * stack alone was why it so often looked broken — in search or lyrics it had nothing

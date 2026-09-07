@@ -43,6 +43,12 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onSourceChosen(source: LibraryBrowser.Source)
         fun onBrowseBack()
         fun loadArtwork(item: ListItem, onBitmap: (Bitmap) -> Unit)
+
+        /**
+         * The real name of a row whose title is only a file name. Answers nothing at all
+         * for every other row, which is most of them.
+         */
+        fun loadName(item: ListItem, onName: (title: String, subtitle: String?) -> Unit)
     }
 
     private val permissionBar: View = root.findViewById(R.id.permissionBar)
@@ -528,6 +534,26 @@ class ControlsBinder(root: View, private val actions: Actions) {
             }
         }
 
+        /**
+         * A row named after a file rather than after a song. The lookup is the same one
+         * the cover goes through, so a row that has drawn its cover has already paid for
+         * this; the uri is stamped and checked the same way, because the row may have
+         * been recycled by the time an answer arrives.
+         */
+        private fun bindName(view: View, item: Row) {
+            val source = item.source ?: return
+            view.tag = source.uri
+            actions.loadName(source) { title, subtitle ->
+                if (view.tag != source.uri) return@loadName
+                view.findViewById<TextView>(R.id.rowTitle).text = title
+                view.findViewById<TextView>(R.id.rowSubtitle).apply {
+                    if (subtitle.isNullOrEmpty()) return@apply
+                    text = subtitle
+                    visibility = View.VISIBLE
+                }
+            }
+        }
+
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val view = convertView ?: inflater.inflate(R.layout.browse_row, parent, false)
             val item = items[position]
@@ -543,6 +569,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
                 visibility = if (item.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
             }
             bindArtwork(view.findViewById(R.id.rowThumb), item.source)
+            bindName(view, item)
 
             // Only on the way in: recycled rows must not re-animate while scrolling.
             if (position > animatedUpTo) {

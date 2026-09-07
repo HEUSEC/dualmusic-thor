@@ -150,6 +150,28 @@ class LocalLibrary(private val context: Context) {
         val uri: String get() = "$TRACK_PREFIX$id"
         val contentUri: Uri get() = contentUriFor(id)
 
+        /**
+         * True when [title] is really just the file's name.
+         *
+         * MediaStore has no "untagged" flag: a file with no title tag gets its own file
+         * name as the title, and there is no way to tell that from a song genuinely
+         * called that except to compare the two. This is the whole signal that a lookup
+         * has something to correct rather than something to leave alone.
+         */
+        val titleIsFileName: Boolean
+            get() {
+                val name = path?.substringAfterLast('/')?.substringBeforeLast('.') ?: return false
+                return name.equals(title, ignoreCase = true)
+            }
+
+        /** The folders a file sits in, nearest first: often the album, then the artist. */
+        val folders: List<String>
+            get() = path?.substringBeforeLast('/').orEmpty()
+                .split('/')
+                .filter { it.isNotBlank() }
+                .takeLast(2)
+                .reversed()
+
         fun toListItem(): ListItem = ListItem(
             /* id = */ uri,
             /* uri = */ uri,

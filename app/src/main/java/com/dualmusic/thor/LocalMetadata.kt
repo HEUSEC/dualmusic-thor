@@ -10,6 +10,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.text.Normalizer
 import java.util.concurrent.Executors
 
 /**
@@ -58,10 +59,21 @@ class LocalMetadata(
         private const val COVER_ART = "https://coverartarchive.org/release"
 
         /**
-         * MusicBrainz asks for one request a second and blocks callers who ignore it.
-         * Everything here runs on one thread, so spacing it is enough to comply.
+         * How long to leave between requests, per host, because the two publish
+         * different limits: MusicBrainz asks for one request a second and blocks callers
+         * who ignore it, and Apple documents roughly twenty calls a minute, which is the
+         * stricter of the two. Everything here runs on one thread, so spacing is enough
+         * to comply with both.
          */
-        private const val MIN_REQUEST_GAP_MS = 1100L
+        private const val MUSICBRAINZ_GAP_MS = 1100L
+        private const val ITUNES_GAP_MS = 3100L
+
+        /**
+         * Lookups allowed to be waiting at once. A fast scroll through a folder of
+         * untagged files can ask about more rows than anybody will look at, and at three
+         * seconds a request that queue would outlive the user's interest in it.
+         */
+        private const val MAX_BACKLOG = 24
 
         private const val USER_AGENT =
             "DualMusic/0.1 (dual-screen music client for AYN Thor)"
@@ -91,27 +103,77 @@ class LocalMetadata(
 
         /** Suffixes one catalogue writes and the other does not, plus all punctuation. */
         private val BRACKETED = Regex("""\(.*?\)|\[.*?]""")
+
+        /**
+         * What people leave in file names. Measured, not guessed: a term carrying any of
+         * this returns nothing at all from iTunes, where the same term without it
+         * returns the track.
+         */
+        private val NOISE = Regex(
+            """\b(official\s*(music\s*)?(video|audio)|lyrics?(\s*video)?|video|hq|hd|""" +
+                """full\s*album|\d{3,4}\s*kbps|www\.\S+)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** A leading track number, which pulls the answer towards the wrong pressing. */
+        private val LEADING_NUMBER = Regex("""^\s*\d{1,3}\s*[-._)\]]*\s*""")
+
+        /** A separator with space around it is deliberate; the parts either side are names. */
+        private val SPACED_SEPARATOR = Regex("""\s+[-–—]\s+""")
+
+        /**
+         * Names that identify nothing: what a recorder, a ripper or a messaging app
+         * calls a file when nobody has named it. Measured, again — `track01` is refused
+         * here rather than by the rule below, because there really is a single called
+         * *Track01* and the rule would have accepted it.
+         */
+        private val PLACEHOLDER = Regex(
+            """^(track|audio|recording|rec|untitled|new\s*recording|voice(\s*memo)?|""" +
+                """sound|clip|file|song|msg|video)[\s\d._-]*$""",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** Folders that name a place on the disk rather than anything about the music. */
+        private val GENERIC_FOLDERS = setOf(
+            "music", "musica", "audio", "media", "mp3", "download", "downloads", "sdcard",
+            "storage", "emulated", "0", "songs", "song", "tracks", "sounds", "telegram",
+            "whatsapp", "bluetooth", "documents", "dcim",
+        )
         private val NOT_WORD = Regex("""[^\p{L}\p{N}]+""")
 
+        /** The accents NFD splits off, so `bôa` and `boa` compare as the same name. */
+        private val COMBINING = Regex("""\p{Mn}+""")
+
         /** A lookup that ran and found nothing, which is worth remembering for a while. */
-        private val EMPTY = Release(null, null, null, null)
+        private val EMPTY = Tags()
     }
 
-    /** What a catalogue knows about the record a file belongs to. Any field may be absent. */
-    data class Release(
-        val album: String?,
-        val artist: String?,
-        val year: Int?,
-        val coverUrl: String?,
+    /**
+     * What a catalogue knows about a file, which is everything a tag would have said.
+     * Any field may be absent; [title] is only ever filled in when the file had no title
+     * of its own, because a tag the user set outranks a database.
+     */
+    data class Tags(
+        val title: String? = null,
+        val artist: String? = null,
+        val album: String? = null,
+        val albumArtist: String? = null,
+        val genre: String? = null,
+        val year: Int? = null,
+        val trackNumber: Int? = null,
+        val trackCount: Int? = null,
+        val discNumber: Int? = null,
+        val coverUrl: String? = null,
     )
 
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
     /** Answers already given this run, misses included, so a scroll asks disk once. */
-    private val known = HashMap<String, Release?>()
+    private val known = HashMap<String, Tags?>()
 
-    private var lastRequestAt = 0L
+    private val lastRequestAt = HashMap<String, Long>()
+    private val backlog = java.util.concurrent.atomic.AtomicInteger()
 
     // --- entry points ---------------------------------------------------------
 
@@ -124,9 +186,9 @@ class LocalMetadata(
     fun enrich(
         track: LocalLibrary.Track,
         wantCover: Boolean,
-        onResult: (release: Release?, cover: ByteArray?) -> Unit,
+        onResult: (release: Tags?, cover: ByteArray?) -> Unit,
     ) {
-        executor.execute {
+        submit({ onResult(null, null) }) {
             val release = releaseOf(track)
             val bytes = if (wantCover && release?.coverUrl != null) {
                 try {
@@ -143,6 +205,19 @@ class LocalMetadata(
     }
 
     /**
+     * The tags for one track, for a browse row that would rather show what the file is
+     * than what it is called. Null when the file already carries a title of its own,
+     * since there is then nothing to correct.
+     */
+    fun tagsForTrack(trackId: Long, onTags: (Tags?) -> Unit) {
+        submit({ onTags(null) }) {
+            val track = trackOf(trackId)
+            val tags = if (track?.titleIsFileName == true) releaseOf(track) else null
+            main.post { onTags(tags) }
+        }
+    }
+
+    /**
      * A cover for a row that knows only which track it is drawing one for.
      *
      * [settled] says whether the answer is final: true when the catalogues were asked
@@ -151,11 +226,13 @@ class LocalMetadata(
      * is worth putting through the chain again on the next rebind.
      */
     fun coverForTrack(trackId: Long, onBytes: (bytes: ByteArray?, settled: Boolean) -> Unit) {
-        executor.execute {
-            val track = library.tracksBlocking("${LocalLibrary.TRACK_PREFIX}$trackId").firstOrNull()
+        // Dropped rather than queued when the backlog is full, and *not* settled: the
+        // row was skipped, which says nothing about whether a cover exists.
+        submit({ onBytes(null, false) }) {
+            val track = trackOf(trackId)
             if (track == null) {
                 main.post { onBytes(null, true) }
-                return@execute
+                return@submit
             }
             var settled = true
             val bytes = try {
@@ -169,9 +246,34 @@ class LocalMetadata(
         }
     }
 
+    private fun trackOf(trackId: Long): LocalLibrary.Track? =
+        library.tracksBlocking("${LocalLibrary.TRACK_PREFIX}$trackId").firstOrNull()
+
+    /**
+     * Queues one lookup, or refuses it. Requests are seconds apart by the catalogues'
+     * own rules, so a queue that accepts everything a scrolling list asks for would
+     * spend minutes answering questions nobody is still looking at; past the cap the
+     * caller is told so on the main thread and the row simply stays as it was.
+     */
+    private fun submit(onRefused: () -> Unit, work: () -> Unit) {
+        if (backlog.get() >= MAX_BACKLOG) {
+            Log.d(TAG, "lookup queue full, skipping")
+            main.post(onRefused)
+            return
+        }
+        backlog.incrementAndGet()
+        executor.execute {
+            try {
+                work()
+            } finally {
+                backlog.decrementAndGet()
+            }
+        }
+    }
+
     // --- lookup ---------------------------------------------------------------
 
-    private fun releaseOf(track: LocalLibrary.Track): Release? {
+    private fun releaseOf(track: LocalLibrary.Track): Tags? {
         val key = keyOf(track) ?: return null
         synchronized(known) { if (known.containsKey(key)) return known[key] }
 
@@ -212,11 +314,20 @@ class LocalMetadata(
     }
 
     /**
-     * iTunes first, MusicBrainz second. An album name is the better query when the file
-     * has one — it identifies a record rather than one song on it — and the title is the
-     * fallback, which is the untagged-album case this whole class exists for.
+     * Two different problems, so two different lookups.
+     *
+     * A file that carries tags is asked about by them, and the album name is the better
+     * query when there is one: it identifies a record rather than one song on it.
+     *
+     * A file that carries none has only its own name — `duvet-boa.mp3` — and that is a
+     * different job, because a name does not say which half is the song and which is the
+     * band. It is not guessed: both halves are handed to the catalogue at once and the
+     * answer decides, since only one of the two readings is a record that exists.
      */
-    private fun lookUp(track: LocalLibrary.Track): Release? {
+    private fun lookUp(track: LocalLibrary.Track): Tags? =
+        if (track.titleIsFileName) lookUpByName(track) else lookUpByTags(track)
+
+    private fun lookUpByTags(track: LocalLibrary.Track): Tags? {
         val artist = track.artist
         val album = track.album
         return when {
@@ -228,12 +339,127 @@ class LocalMetadata(
     }
 
     /**
+     * A file identified by its name and the folders above it.
+     *
+     * The name is cleaned before it is used as a query, because the junk people leave in
+     * file names is not neutral: measured against the live API, `Idioteque (Official
+     * Video)` and `Idioteque [HQ audio]` both return *nothing at all*, while `Idioteque`
+     * returns the track from Kid A. A leading track number is as bad in a quieter way -
+     * `01 - Radiohead - Idioteque` returns the live version from a different album,
+     * where the same query without the number returns the studio one.
+     *
+     * The folders come along as further terms. `…/bôa/Twilight/01 Duvet.mp3` names the
+     * artist and the album outright, and a catalogue given all three finds one record.
+     */
+    private fun lookUpByName(track: LocalLibrary.Track): Tags? {
+        val base = track.path?.substringAfterLast('/')?.substringBeforeLast('.') ?: track.title
+        val name = clean(base)
+        val folders = track.folders.map(::clean).filterNot(::isGenericFolder)
+
+        // A name that identifies nothing must not be searched for: the catalogue would
+        // answer anyway. The folders may still name the record, though, and that is an
+        // album lookup — it fills in everything except which song this is, which is
+        // exactly what is not known.
+        if (PLACEHOLDER.matches(name)) {
+            val album = folders.firstOrNull() ?: return null
+            return searchItunes(folders.getOrNull(1), album, song = null)
+        }
+
+        val terms = (split(name) + folders)
+            .map { it.trim() }
+            .filter { fold(it).isNotEmpty() }
+            .distinctBy { fold(it) }
+        if (terms.isEmpty()) return null
+
+        val url = Uri.parse(ITUNES).buildUpon()
+            .appendQueryParameter("term", terms.joinToString(" "))
+            .appendQueryParameter("entity", "song")
+            .appendQueryParameter("media", "music")
+            .appendQueryParameter("limit", "10")
+            .build().toString()
+
+        val body = get(url) ?: return null
+        val results = JSONObject(body).optJSONArray("results") ?: return null
+        val ours = words(terms.joinToString(" "))
+        // A record has more than one version of its own songs on it, and the catalogue
+        // does not list them in the order anybody would want. So a result whose title is
+        // the file's name exactly wins over one that merely confirms it: asking about
+        // `bôa/Twilight/01 Duvet.mp3` answers "Duvet (Acoustic)" first and "Duvet"
+        // second, and the second is the one that file is.
+        return pickByName(results, ours, terms, exact = true)
+            ?: pickByName(results, ours, terms, exact = false)
+    }
+
+    private fun pickByName(
+        results: JSONArray,
+        ours: Set<String>,
+        terms: List<String>,
+        exact: Boolean,
+    ): Tags? {
+        // Bracketed text is kept for this one comparison, and only this one: it is the
+        // whole difference between "Duvet" and "Duvet (Acoustic)", which the normal
+        // folding deliberately erases.
+        val names = terms.map(::foldKeepingBrackets).toSet()
+        for (i in 0 until results.length()) {
+            val candidate = results.optJSONObject(i) ?: continue
+            if (!confirms(candidate, ours)) continue
+            if (exact && foldKeepingBrackets(candidate.optString("trackName")) !in names) continue
+            return tagsOf(candidate, withTitle = true)
+        }
+        return null
+    }
+
+    /**
+     * Whether a result confirms what the file name claimed, rather than merely being
+     * something the search engine returned.
+     *
+     * Three conditions, and they exist because a search never says "no": asking for
+     * `track01` answers *Track 01* by an artist nobody named, and `audio_2024_11_03`
+     * answers a recording whose title happens to share its digits. Both are rejected
+     * here and neither would be by a rule that just took the first row.
+     *
+     *  1. Every word the file name offered is somewhere in the result - its title, its
+     *     artist or its album. Nothing we claimed goes unexplained.
+     *  2. One of those words is in the song title, so the file is about *this song* and
+     *     not about something merely on the same record.
+     *  3. When the name carried more than one word, another is in the artist. This is
+     *     what settles `duvet-boa` without ever deciding which half was which: only the
+     *     reading where one half is the song and the other is the band survives it.
+     */
+    private fun confirms(candidate: JSONObject, ours: Set<String>): Boolean {
+        if (ours.isEmpty()) return false
+        val title = words(candidate.optString("trackName"))
+        val artist = words(candidate.optString("artistName"))
+        val album = words(candidate.optString("collectionName"))
+        val theirs = title + artist + album
+        if (!theirs.containsAll(ours)) return false
+        if (ours.none { it in title }) return false
+        return ours.size < 2 || ours.any { it in artist }
+    }
+
+    /** Everything an iTunes row knows, which is most of what a tag would have carried. */
+    private fun tagsOf(candidate: JSONObject, withTitle: Boolean): Tags = Tags(
+        title = if (withTitle) candidate.optString("trackName").takeIf { it.isNotBlank() } else null,
+        artist = candidate.optString("artistName").takeIf { it.isNotBlank() },
+        album = candidate.optString("collectionName").takeIf { it.isNotBlank() },
+        albumArtist = candidate.optString("collectionArtistName").takeIf { it.isNotBlank() },
+        genre = candidate.optString("primaryGenreName").takeIf { it.isNotBlank() },
+        year = candidate.optString("releaseDate").take(4).toIntOrNull(),
+        trackNumber = candidate.optInt("trackNumber").takeIf { it > 0 },
+        trackCount = candidate.optInt("trackCount").takeIf { it > 0 },
+        discNumber = candidate.optInt("discNumber").takeIf { it > 0 },
+        coverUrl = candidate.optString("artworkUrl100")
+            .takeIf { it.isNotBlank() }
+            ?.replace("100x100", "${ITUNES_SIZE}x$ITUNES_SIZE"),
+    )
+
+    /**
      * One request for everything: `collectionName`, `artistName`, `releaseDate` and an
      * artwork URL. The URL comes back as a 100 px thumbnail whose size is part of the
      * path, so asking for the large one is a string replacement rather than a second
      * request — undocumented, but it has been how that CDN addresses sizes for years.
      */
-    private fun searchItunes(artist: String?, album: String?, song: String?): Release? {
+    private fun searchItunes(artist: String?, album: String?, song: String?): Tags? {
         val term = listOfNotNull(artist, album ?: song).joinToString(" ").trim()
         if (term.isEmpty()) return null
         val url = Uri.parse(ITUNES).buildUpon()
@@ -260,7 +486,7 @@ class LocalMetadata(
         album: String?,
         wanted: String?,
         strict: Boolean,
-    ): Release? {
+    ): Tags? {
         for (i in 0 until results.length()) {
             val candidate = results.optJSONObject(i) ?: continue
             val collection = candidate.optString("collectionName").takeIf { it.isNotBlank() }
@@ -270,14 +496,8 @@ class LocalMetadata(
             // An artist the file already names has to agree, or this is another record
             // with the same title — of which there are many.
             if (artist != null && !matches(credited, artist, strict)) continue
-            return Release(
-                album = collection,
-                artist = credited,
-                year = candidate.optString("releaseDate").take(4).toIntOrNull(),
-                coverUrl = candidate.optString("artworkUrl100")
-                    .takeIf { it.isNotBlank() }
-                    ?.replace("100x100", "${ITUNES_SIZE}x$ITUNES_SIZE"),
-            )
+            // The file has a title of its own here, so the catalogue does not supply one.
+            return tagsOf(candidate, withTitle = false)
         }
         return null
     }
@@ -287,7 +507,7 @@ class LocalMetadata(
      * id, and answers 404 for the many releases nobody has uploaded art for, so the URL
      * is only offered when it actually resolves.
      */
-    private fun searchMusicBrainz(artist: String?, album: String): Release? {
+    private fun searchMusicBrainz(artist: String?, album: String): Tags? {
         val query = buildString {
             append("release:\"").append(escape(album)).append('"')
             if (artist != null) append(" AND artist:\"").append(escape(artist)).append('"')
@@ -315,8 +535,8 @@ class LocalMetadata(
         artist: String?,
         album: String,
         strict: Boolean,
-    ): Release? {
-        var fallback: Release? = null
+    ): Tags? {
+        var fallback: Tags? = null
         var probes = 0
         for (i in 0 until releases.length()) {
             val candidate = releases.optJSONObject(i) ?: continue
@@ -325,7 +545,7 @@ class LocalMetadata(
             val credited = creditedArtist(candidate.optJSONArray("artist-credit"))
             if (artist != null && !matches(credited, artist, strict)) continue
             val id = candidate.optString("id").takeIf { it.isNotBlank() } ?: continue
-            val release = Release(
+            val release = Tags(
                 album = title,
                 artist = credited,
                 year = candidate.optString("date").take(4).toIntOrNull(),
@@ -364,11 +584,61 @@ class LocalMetadata(
         return !strict && (a.contains(b) || b.contains(a))
     }
 
-    private fun normalise(text: String?): String = text.orEmpty()
-        .lowercase()
+    private fun normalise(text: String?): String = fold(text)
+
+    /**
+     * A name reduced to something two catalogues can be compared on: no case, no
+     * accents, no punctuation, no bracketed suffix.
+     *
+     * Folding the accents is not cosmetic. iTunes spells the band on Duvet `bôa`, and a
+     * file called `duvet-boa.mp3` spells it `boa`; without this they are simply two
+     * different strings and the right answer gets thrown away.
+     */
+    private fun fold(text: String?): String {
+        val stripped = text.orEmpty().replace(BRACKETED, " ")
+        return Normalizer.normalize(stripped, Normalizer.Form.NFD)
+            .replace(COMBINING, "")
+            .lowercase()
+            .replace(NOT_WORD, " ")
+            .trim()
+    }
+
+    /** [fold] without the bracket-stripping, for telling a version from its original. */
+    private fun foldKeepingBrackets(text: String?): String =
+        Normalizer.normalize(text.orEmpty(), Normalizer.Form.NFD)
+            .replace(COMBINING, "")
+            .lowercase()
+            .replace(NOT_WORD, " ")
+            .trim()
+
+    private fun words(text: String?): Set<String> =
+        fold(text).split(' ').filter { it.isNotEmpty() }.toSet()
+
+    /** The junk out of a file name, so what is left is something to search for. */
+    private fun clean(name: String): String = name
+        .replace('_', ' ')
         .replace(BRACKETED, " ")
-        .replace(NOT_WORD, " ")
+        .replace(NOISE, " ")
+        .replace(LEADING_NUMBER, "")
+        .replace(Regex("""\s+"""), " ")
         .trim()
+
+    /**
+     * A cleaned name split into the parts it was built from.
+     *
+     * A spaced separator wins where there is one, so `Jay-Z - 99 Problems` stays two
+     * names rather than three. Failing that, a single bare hyphen is a separator too -
+     * that is what `duvet-boa` is - but two or more are left alone, since by then the
+     * hyphens are as likely to belong to the words as to sit between them.
+     */
+    private fun split(name: String): List<String> {
+        val spaced = name.split(SPACED_SEPARATOR).map { it.trim() }.filter { it.isNotEmpty() }
+        if (spaced.size >= 2) return spaced
+        val bare = name.split('-').map { it.trim() }.filter { it.isNotEmpty() }
+        return if (bare.size == 2) bare else listOf(name.trim())
+    }
+
+    private fun isGenericFolder(name: String): Boolean = fold(name) in GENERIC_FOLDERS
 
     /** Lucene reads these; a record called `AC/DC — Live!` must not become a syntax error. */
     private fun escape(text: String): String =
@@ -387,12 +657,12 @@ class LocalMetadata(
      * an empty object, which expires; a hit does not, because a release's name and year
      * do not change.
      */
-    private fun readCached(key: String): Release? {
+    private fun readCached(key: String): Tags? {
         val file = releaseFile(key) ?: return null
         if (!file.isFile) return null
         return try {
             val json = JSONObject(file.readText())
-            val release = Release(
+            val release = Tags(
                 album = json.optString("album").takeIf { it.isNotBlank() },
                 artist = json.optString("artist").takeIf { it.isNotBlank() },
                 year = json.optInt("year").takeIf { it > 0 },
@@ -411,7 +681,7 @@ class LocalMetadata(
         }
     }
 
-    private fun writeCached(key: String, release: Release) {
+    private fun writeCached(key: String, release: Tags) {
         val file = releaseFile(key) ?: return
         try {
             file.parentFile?.mkdirs()
@@ -492,7 +762,7 @@ class LocalMetadata(
         open(url, "HEAD")?.use { it.responseCode == 200 } ?: false
 
     private fun open(url: String, method: String): HttpURLConnection? {
-        space()
+        space(url)
         return try {
             (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = method
@@ -508,17 +778,19 @@ class LocalMetadata(
         }
     }
 
-    /** Keeps consecutive requests a second apart, which is what MusicBrainz asks for. */
-    private fun space() {
-        val since = System.currentTimeMillis() - lastRequestAt
-        if (since in 0 until MIN_REQUEST_GAP_MS) {
+    /** Holds each host to its own published rate, rather than all of them to the slowest. */
+    private fun space(url: String) {
+        val host = Uri.parse(url).host.orEmpty()
+        val gap = if (host.endsWith("itunes.apple.com")) ITUNES_GAP_MS else MUSICBRAINZ_GAP_MS
+        val since = System.currentTimeMillis() - (lastRequestAt[host] ?: 0L)
+        if (since in 0 until gap) {
             try {
-                Thread.sleep(MIN_REQUEST_GAP_MS - since)
+                Thread.sleep(gap - since)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
         }
-        lastRequestAt = System.currentTimeMillis()
+        lastRequestAt[host] = System.currentTimeMillis()
     }
 
     private fun <T> HttpURLConnection.use(block: (HttpURLConnection) -> T): T = try {

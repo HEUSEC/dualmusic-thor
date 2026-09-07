@@ -398,9 +398,14 @@ class LocalPlaybackService : Service() {
                     session.setMetadata(metadataOf(track, art, null))
                     updateNotification()
                 }
-                // A file that names its record and carries its cover needs nobody's
-                // help; one that does not is exactly what the catalogues are for.
-                if (art == null || track.album == null || track.year <= 0) enrich(track, art)
+                // A file that names itself and its record and carries its cover needs
+                // nobody's help; one that does not is what the catalogues are for. A
+                // title that is really the file name is the strongest case of all.
+                if (art == null || track.titleIsFileName ||
+                    track.album == null || track.year <= 0
+                ) {
+                    enrich(track, art)
+                }
             }
         }
     }
@@ -412,14 +417,14 @@ class LocalPlaybackService : Service() {
      * throws it away.
      */
     private fun enrich(track: LocalLibrary.Track, art: Bitmap?) {
-        metadata.enrich(track, wantCover = art == null) { release, bytes ->
+        metadata.enrich(track, wantCover = art == null) { tags, bytes ->
             if (artworkFor != track.id) return@enrich
-            if (release == null && bytes == null) return@enrich
+            if (tags == null && bytes == null) return@enrich
             worker.execute {
                 val cover = bytes?.let { LocalLibrary.decodeScaled(it) } ?: art
                 main.post {
                     if (artworkFor != track.id) return@post
-                    session.setMetadata(metadataOf(track, cover, release))
+                    session.setMetadata(metadataOf(track, cover, tags))
                     updateNotification()
                 }
             }
@@ -433,17 +438,27 @@ class LocalPlaybackService : Service() {
     private fun metadataOf(
         track: LocalLibrary.Track,
         art: Bitmap?,
-        release: LocalMetadata.Release?,
+        tags: LocalMetadata.Tags?,
     ): MediaMetadata {
-        val year = track.year.takeIf { it > 0 } ?: release?.year ?: 0
+        val year = track.year.takeIf { it > 0 } ?: tags?.year ?: 0
+        val number = track.trackNumber.takeIf { it > 0 } ?: tags?.trackNumber ?: 0
+        // The file wins wherever it has something to say: a tag the user set is theirs
+        // and right, even where a database disagrees about the pressing. The title is
+        // the one exception, because a "title" that is only the file's own name is not
+        // a tag at all - it is the absence of one, wearing its clothes.
+        val title = if (track.titleIsFileName) tags?.title ?: track.title else track.title
         return MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, track.uri)
-            .putString(MediaMetadata.METADATA_KEY_TITLE, track.title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, track.artist ?: release?.artist)
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, track.album ?: release?.album)
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, track.artist ?: tags?.artist)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, track.album ?: tags?.album)
             .putLong(MediaMetadata.METADATA_KEY_DURATION, track.durationMs)
-            .putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, track.trackNumber.toLong())
             .apply {
+                tags?.albumArtist?.let { putString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST, it) }
+                tags?.genre?.let { putString(MediaMetadata.METADATA_KEY_GENRE, it) }
+                tags?.trackCount?.let { putLong(MediaMetadata.METADATA_KEY_NUM_TRACKS, it.toLong()) }
+                tags?.discNumber?.let { putLong(MediaMetadata.METADATA_KEY_DISC_NUMBER, it.toLong()) }
+                if (number > 0) putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, number.toLong())
                 if (year > 0) putLong(MediaMetadata.METADATA_KEY_YEAR, year.toLong())
                 if (art != null) putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
             }

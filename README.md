@@ -92,8 +92,12 @@ artist, year, cover — from two open catalogues, in this order and for differen
    store never carried — bootlegs, small labels, non-Western catalogues — which is
    exactly what the first source is worst at. Its *cover* coverage is patchier, so it is
    the fallback rather than the primary. It asks for a real User-Agent and no more than
-   one request a second; both are honoured, which is what the single lookup thread is
-   for.
+      one request a second, and Apple documents roughly twenty calls a minute, which is
+   the stricter of the two; each host is held to its own rate rather than all of them to
+   the slowest, which is what the single lookup thread is for. That thread also refuses
+   work past a backlog of 24: at three seconds a request, a fast scroll through a folder
+   of untagged files would otherwise spend minutes answering questions nobody is still
+   looking at.
 
 **A result is only used when it matches what was asked for.** Taking whatever came back
 first hangs the wrong cover on the record, which is worse than no cover. Names are
@@ -119,13 +123,52 @@ a cover does not exist, and the next play tries again.
 **It never writes to your files.** The lookup is an overlay in the app's own cache.
 Retagging somebody's library is destructive and should be asked for; it has not been.
 
-Two limits worth knowing. A file with **no usable tags at all** cannot be looked up by
-name — identifying it needs acoustic fingerprinting (AcoustID/Chromaprint), which is a
-native library and not something this project takes on. And browse **row titles are left
-as MediaStore reports them**: untagged files all land in one "Unknown album" bucket that
-is usually several real records, so rewriting that row's title would state something
-false. The enrichment shows up where it is about one known song — the now-playing panel's
-album and year, and covers everywhere.
+### A file with no tags at all
+
+`duvet-boa.mp3` has no tags, so MediaStore reports its title as `duvet-boa` — that is
+what it does with an untagged file, and it is also the only way to *detect* one: a title
+that is character-for-character the file's own name is not a tag, it is the absence of
+one wearing its clothes.
+
+From there the name is the query. It is cleaned first, because the junk people leave in
+file names is not neutral: measured against the live API, `Idioteque (Official Video)`
+and `Idioteque [HQ audio]` each return **nothing at all**, while `Idioteque` returns the
+track from *Kid A*. A leading track number is wrong in a quieter way — `01 - Radiohead -
+Idioteque` returns the *live* version from a different album, and the same query without
+the number returns the studio one. The folders above the file come along as further
+terms, since `…/bôa/Twilight/01 Duvet.mp3` names the artist and the record outright.
+
+**Which half of `duvet-boa` is the song is never guessed.** Both halves go to the
+catalogue together and the answer decides, because only one of the two readings is a
+record that exists. Accepting that answer takes three things: every word the name offered
+has to appear somewhere in the result, one of them has to be in the song title, and — when
+the name carried more than one word — another has to be in the artist. That last
+condition is what settles the ambiguity without ever ruling on it.
+
+The rule exists because a search never says "no". `track01` answers with a real single
+called *Track01*; `audio_2024_11_03` answers with a recording that happens to share its
+digits. The second is refused by the rule; the first is refused earlier, by a short list
+of names that identify nothing — `track`, `recording`, `audio`, `untitled` and their
+kind — because there genuinely is a song called that and the rule would have believed it.
+A file named that way still gets its album, artist, year and cover from its folders; it
+just gets no title, which is honest, since nothing on the disk says which song it is.
+
+Where a record holds several versions of the same song, the one whose title matches the
+file name *exactly* wins over one that merely confirms it — brackets included, and they
+are the only place brackets are kept. Asking about `bôa/Twilight/01 Duvet.mp3` answers
+"Duvet (Acoustic)" first and "Duvet" second; the file is the second.
+
+What comes back is the whole tag set — title, artist, album, album artist, genre, year,
+track number, track count, disc number, cover — and the player publishes all of it on its
+MediaSession, so the panel, the notification and the lyrics lookup all see a named song
+instead of a file name. Browse rows are corrected the same way, through the same cached
+lookup the cover already pays for.
+
+One limit remains: a file with no usable name *and* no folders cannot be identified at
+all. That needs acoustic fingerprinting (AcoustID/Chromaprint), a native library this
+project does not take on. Browse rows for **albums** are still left as MediaStore reports
+them — untagged files land in one "Unknown album" bucket that is usually several real
+records, so rewriting that row would state something false.
 
 Names do leave the device for this, exactly as they already do for the LRCLIB lyrics
 lookup. Audio never does.
