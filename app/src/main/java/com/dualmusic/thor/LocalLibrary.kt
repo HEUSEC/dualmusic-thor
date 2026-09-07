@@ -67,6 +67,9 @@ class LocalLibrary(private val context: Context) {
          */
         private const val SETTLE_MS = 700L
 
+        /** A search is a list to glance at, the same as a queue is. */
+        private const val SEARCH_LIMIT = 60
+
         /** Tracks are read in album order; MediaStore packs disc and track into one number. */
         private const val DISC_MULTIPLIER = 1000
 
@@ -368,6 +371,53 @@ class LocalLibrary(private val context: Context) {
         if (trackUri == null || !trackUri.startsWith(TRACK_PREFIX)) return null
         val id = trackUri.removePrefix(TRACK_PREFIX).toLongOrNull() ?: return null
         return Id3Lyrics.read(context, contentUriFor(id))
+    }
+
+    /**
+     * Songs on this device whose title, artist or album contains [query].
+     *
+     * Deliberately not the browse tree: search is for the song whose name you remember
+     * and whose album you do not, so it looks at all three fields at once and returns
+     * tracks rather than nodes.
+     */
+    fun search(text: String, onResults: (List<ListItem>) -> Unit, onError: (String) -> Unit) {
+        val term = text.trim()
+        if (term.isEmpty()) {
+            onResults(emptyList())
+            return
+        }
+        executor.execute {
+            val like = "%$term%"
+            val tracks = try {
+                query(
+                    "${MediaStore.Audio.Media.TITLE} LIKE ? OR " +
+                        "${MediaStore.Audio.Media.ARTIST} LIKE ? OR " +
+                        "${MediaStore.Audio.Media.ALBUM} LIKE ?",
+                    arrayOf(like, like, like),
+                    "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC",
+                ).take(SEARCH_LIMIT)
+            } catch (e: Exception) {
+                Log.w(TAG, "could not search the library", e)
+                main.post { onError(context.getString(R.string.local_unreadable)) }
+                return@execute
+            }
+            main.post { onResults(tracks.map { it.toListItem() }) }
+        }
+    }
+
+    /**
+     * Plays an arbitrary list of tracks — a set of search hits, which is not a node of
+     * the tree and so has no URI of its own to be played by.
+     */
+    fun playTracks(trackUris: List<String>, position: Int) {
+        executor.execute {
+            val ids = trackUris
+                .filter { it.startsWith(TRACK_PREFIX) }
+                .mapNotNull { it.removePrefix(TRACK_PREFIX).toLongOrNull() }
+            val tracks = tracksByIds(ids.toLongArray())
+            if (tracks.isEmpty()) return@execute
+            main.post { LocalPlaybackService.play(context, tracks, position.coerceIn(0, tracks.lastIndex)) }
+        }
     }
 
     // --- queries --------------------------------------------------------------

@@ -503,11 +503,15 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     }
 
     /**
-     * Search lives in the Web API, so the first use sends the user through a one-off
-     * browser consent; after that the token refreshes itself.
+     * Search follows the source you are in. Spotify's lives in the Web API and the first
+     * use sends the user through a one-off browser consent; the device's own needs
+     * nothing, and asking for a Spotify token in order to look through your own files
+     * would be absurd.
      */
     override fun onOpenSearch() {
-        if (!SpotifyWebAuth.isAuthorised(this)) {
+        if (browseState?.source == LibraryBrowser.Source.SPOTIFY &&
+            !SpotifyWebAuth.isAuthorised(this)
+        ) {
             Toast.makeText(this, R.string.search_needs_auth, Toast.LENGTH_SHORT).show()
             SpotifyWebAuth.authorize(this)
             return
@@ -518,14 +522,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     override fun onSearch(query: String) {
         if (!searchMode) return
-        webApi.search(
-            query,
-            onResults = {
-                searchResults = it
-                controlsBinder?.showSearchResults(it)
-            },
-            onError = { controlsBinder?.showSearchMessage(it) },
-        )
+        val onResults: (List<ListItem>) -> Unit = {
+            searchResults = it
+            controlsBinder?.showSearchResults(it)
+        }
+        val onError: (String) -> Unit = { controlsBinder?.showSearchMessage(it) }
+        if (browseState?.source == LibraryBrowser.Source.LOCAL) {
+            localLibrary.search(query, onResults, onError)
+        } else {
+            webApi.search(query, onResults, onError)
+        }
     }
 
     private fun closeSearch(): Boolean {
@@ -555,9 +561,14 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     override fun onBrowseItemTapped(item: ListItem, position: Int) {
         // A search hit is not part of the browse tree, so the results are the context:
-        // playing the hit alone would leave Spotify to invent what comes after it.
+        // playing the hit alone would leave the player to invent what comes after it.
         if (searchMode) {
-            webApi.playTracks(searchResults.map { it.uri }, position) { spotify.playUri(item.uri) }
+            val uris = searchResults.map { it.uri }
+            if (LocalLibrary.isLocal(item.uri)) {
+                localLibrary.playTracks(uris, position)
+            } else {
+                webApi.playTracks(uris, position) { spotify.playUri(item.uri) }
+            }
         } else {
             browser.onItemTapped(item, position)
         }

@@ -434,6 +434,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
             browseMessage.visibility = View.GONE
             browseAction.visibility = View.GONE
             btnSpotify.visibility = View.GONE
+            // No library open yet, so there is nothing to look through.
+            btnSearch.visibility = View.GONE
             btnBrowseBack.isEnabled = false
             btnBrowseBack.alpha = 0.35f
             browseTitle.text = context.getString(R.string.choose_source)
@@ -442,6 +444,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
             return
         }
         if (sourcePicker.visibility == View.VISIBLE) Motion.swap(sourcePicker, browseList)
+        btnSearch.visibility = View.VISIBLE
 
         val browsingSpotify = state.source == LibraryBrowser.Source.SPOTIFY
 

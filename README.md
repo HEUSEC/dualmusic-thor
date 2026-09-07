@@ -206,6 +206,13 @@ MediaSession, so the panel, the notification and the lyrics lookup all see a nam
 instead of a file name. Browse rows are corrected the same way, through the same cached
 lookup the cover already pays for.
 
+**Search follows the source you are in.** It used to live only in the Web API, which
+became wrong the moment the panel started opening on a choice: you would be looking at
+your own MP3s, press search, and be handed a Spotify consent screen. Searching the device
+is a `LIKE` across title, artist and album — no account, no token, no network — and a hit
+plays with the rest of the results behind it, the same rule the browse tree uses. The
+search button is hidden on the source picker, where no library is open to search.
+
 The library also watches itself. A `ContentObserver` on `MediaStore.Audio.Media` reloads
 the level on screen when the music on the device changes, without moving off it — because
 a local source that cannot see a file until the app is restarted defeats the point of
