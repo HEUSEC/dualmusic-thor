@@ -128,7 +128,7 @@ class LocalLibrary(private val context: Context) {
         }
 
         /** Embedded art is full size; a panel is not, and a list of them is a lot of heap. */
-        private fun decodeScaled(bytes: ByteArray, maxPx: Int): Bitmap? {
+        fun decodeScaled(bytes: ByteArray, maxPx: Int = ART_PX): Bitmap? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             var sample = 1

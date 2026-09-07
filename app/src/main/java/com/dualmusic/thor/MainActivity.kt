@@ -55,6 +55,11 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     // The application context on purpose: the library outlives this activity, and the
     // service it starts is what keeps the music going once the activity is gone.
     private val localLibrary by lazy { LocalLibrary(applicationContext) }
+    // Shares its cache directory with the player's own instance: one lookup per record,
+    // whichever half of the app asked for it first.
+    private val localMetadata by lazy {
+        LocalMetadata(java.io.File(cacheDir, "releases"), localLibrary)
+    }
     private val audio by lazy { getSystemService(AudioManager::class.java) }
     private var searchMode = false
     private var searchResults: List<ListItem> = emptyList()
@@ -101,7 +106,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         displayManager = getSystemService(DisplayManager::class.java)
         hub = MediaHub(applicationContext)
         spotify = SpotifyRemote(this)
-        artwork = ArtworkLoader(this, spotify, webApi)
+        artwork = ArtworkLoader(this, spotify, webApi, localMetadata)
         browser = LibraryBrowser(
             spotify,
             webApi,

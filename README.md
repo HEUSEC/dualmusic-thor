@@ -78,6 +78,58 @@ though: `READ_MEDIA_AUDIO` grants direct access to audio files and nothing else,
 sibling `.lrc` is readable only where the app has been given wider storage access than
 that. A refusal is not an error; the network answers instead.
 
+### Filling in what the files do not say
+
+A ripped or downloaded library is rarely tagged the way a store's is, and MediaStore can
+only report what is in the file: a folder of untagged MP3s browses as one "Unknown album"
+with no artwork at all. `LocalMetadata` looks the missing parts up by name — album,
+artist, year, cover — from two open catalogues, in this order and for different reasons:
+
+1. **iTunes Search.** No key, no account, and one request returns the album name, the
+   artist, the release date and a cover URL together. Coverage of anything ever sold
+   commercially is excellent and its artwork is the better of the two.
+2. **MusicBrainz, with Cover Art Archive.** Also key-less, and it knows the releases a
+   store never carried — bootlegs, small labels, non-Western catalogues — which is
+   exactly what the first source is worst at. Its *cover* coverage is patchier, so it is
+   the fallback rather than the primary. It asks for a real User-Agent and no more than
+   one request a second; both are honoured, which is what the single lookup thread is
+   for.
+
+**A result is only used when it matches what was asked for.** Taking whatever came back
+first hangs the wrong cover on the record, which is worse than no cover. Names are
+compared with punctuation and `(Remastered 2011)`-style suffixes stripped, and an artist
+the file already names has to agree, since many records share a title. Every result is
+offered an exact match before any of them is accepted on containment: measured against
+the live API, `term=radiohead kid a` returns *KID A MNESIA* as well as *Kid A*, and a
+first-past-the-post containment rule takes whichever the API happened to list first.
+
+Two things about the endpoints were measured rather than read. iTunes writes the artwork
+size into the URL path, so `100x100bb.jpg` → `600x600bb.jpg` is a string replacement
+rather than a second request. And Cover Art Archive serves 250, 500 and 1200 — asking it
+for any other number does not fail, it silently returns the **full-size original**:
+`front-600` measured at 502 kB against 84 kB for `front-500`, larger even than
+`front-1200`. Caching hundreds of those would have been the difference between a cache
+and a problem.
+
+Answers are cached on disk, misses included and with a TTL, and so is the cover itself:
+the second play of a record costs nothing and works with no network, which is the point.
+A lookup that *fails* is not cached as a miss — a dropped connection is not evidence that
+a cover does not exist, and the next play tries again.
+
+**It never writes to your files.** The lookup is an overlay in the app's own cache.
+Retagging somebody's library is destructive and should be asked for; it has not been.
+
+Two limits worth knowing. A file with **no usable tags at all** cannot be looked up by
+name — identifying it needs acoustic fingerprinting (AcoustID/Chromaprint), which is a
+native library and not something this project takes on. And browse **row titles are left
+as MediaStore reports them**: untagged files all land in one "Unknown album" bucket that
+is usually several real records, so rewriting that row's title would state something
+false. The enrichment shows up where it is about one known song — the now-playing panel's
+album and year, and covers everywhere.
+
+Names do leave the device for this, exactly as they already do for the LRCLIB lyrics
+lookup. Audio never does.
+
 **Deliberately out of scope.** Gapless playback and crossfade — `MediaPlayer` can chain
 with `setNextMediaPlayer`, but getting it right is its own piece of work. Playlists on
 disk (`.m3u`). ExoPlayer: the project is framework-only apart from the Spotify SDK, and

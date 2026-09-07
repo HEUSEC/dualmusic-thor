@@ -62,7 +62,7 @@
     <string name="local_unreadable">Could not read the music on this device</string>
     <string name="local_empty">No music files found on this device</string>
     <string name="local_needs_permission">Allow access to your music files</string>
-    <string name="local_needs_permission_hint">DualMusic reads them from the device, nothing leaves it</string>
+    <string name="local_needs_permission_hint">Read from the device; covers are looked up online</string>
     <string name="unknown_album">Unknown album</string>
     <string name="playback_channel">Playback</string>
 </resources>

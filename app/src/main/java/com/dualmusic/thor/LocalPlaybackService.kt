@@ -91,6 +91,7 @@ class LocalPlaybackService : Service() {
     private lateinit var session: MediaSession
     private lateinit var audioManager: AudioManager
     private lateinit var library: LocalLibrary
+    private lateinit var metadata: LocalMetadata
 
     private var player: MediaPlayer? = null
     private var queue: List<LocalLibrary.Track> = emptyList()
@@ -147,6 +148,7 @@ class LocalPlaybackService : Service() {
         super.onCreate()
         audioManager = getSystemService(AudioManager::class.java)
         library = LocalLibrary(applicationContext)
+        metadata = LocalMetadata(java.io.File(cacheDir, "releases"), library)
         createChannel()
 
         session = MediaSession(this, TAG).apply {
@@ -379,37 +381,74 @@ class LocalPlaybackService : Service() {
     // --- what the rest of the app reads ---------------------------------------
 
     /**
-     * Metadata goes out twice: once immediately from what MediaStore already knows, so
-     * the panel has a title the instant the song changes, and again when the cover has
-     * been decoded. Waiting for the bitmap would show an empty panel for as long as the
-     * disk takes.
+     * Metadata goes out up to three times: immediately from what MediaStore already
+     * knows, so the panel has a title the instant the song changes; again when the
+     * cover has been decoded off the disk; and again if the catalogues had something the
+     * file did not. Waiting for any of it would leave the panel empty for as long as the
+     * slowest of the three takes.
      */
     private fun publishMetadata(track: LocalLibrary.Track) {
-        session.setMetadata(metadataOf(track, null))
+        session.setMetadata(metadataOf(track, null, null))
         artworkFor = track.id
         worker.execute {
             val art = LocalLibrary.artwork(applicationContext, track.id)
             main.post {
-                if (artworkFor != track.id || art == null) return@post
-                session.setMetadata(metadataOf(track, art))
-                updateNotification()
+                if (artworkFor != track.id) return@post
+                if (art != null) {
+                    session.setMetadata(metadataOf(track, art, null))
+                    updateNotification()
+                }
+                // A file that names its record and carries its cover needs nobody's
+                // help; one that does not is exactly what the catalogues are for.
+                if (art == null || track.album == null || track.year <= 0) enrich(track, art)
             }
         }
     }
 
-    private fun metadataOf(track: LocalLibrary.Track, art: Bitmap?): MediaMetadata =
-        MediaMetadata.Builder()
+    /**
+     * What the file does not say, looked up by name. It arrives late by definition — a
+     * network round trip after the song is already playing — so it is a later update
+     * rather than something the first one waits for, and a song change in the meantime
+     * throws it away.
+     */
+    private fun enrich(track: LocalLibrary.Track, art: Bitmap?) {
+        metadata.enrich(track, wantCover = art == null) { release, bytes ->
+            if (artworkFor != track.id) return@enrich
+            if (release == null && bytes == null) return@enrich
+            worker.execute {
+                val cover = bytes?.let { LocalLibrary.decodeScaled(it) } ?: art
+                main.post {
+                    if (artworkFor != track.id) return@post
+                    session.setMetadata(metadataOf(track, cover, release))
+                    updateNotification()
+                }
+            }
+        }
+    }
+
+    /**
+     * The file first, the catalogue only where the file is silent: a tag the user set is
+     * theirs and right, even when a database disagrees about the pressing.
+     */
+    private fun metadataOf(
+        track: LocalLibrary.Track,
+        art: Bitmap?,
+        release: LocalMetadata.Release?,
+    ): MediaMetadata {
+        val year = track.year.takeIf { it > 0 } ?: release?.year ?: 0
+        return MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, track.uri)
             .putString(MediaMetadata.METADATA_KEY_TITLE, track.title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, track.artist)
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, track.album)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, track.artist ?: release?.artist)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, track.album ?: release?.album)
             .putLong(MediaMetadata.METADATA_KEY_DURATION, track.durationMs)
             .putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, track.trackNumber.toLong())
             .apply {
-                if (track.year > 0) putLong(MediaMetadata.METADATA_KEY_YEAR, track.year.toLong())
+                if (year > 0) putLong(MediaMetadata.METADATA_KEY_YEAR, year.toLong())
                 if (art != null) putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
             }
             .build()
+    }
 
     private fun publishState() {
         val playing = isPlaying()

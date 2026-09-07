@@ -23,8 +23,11 @@ import java.util.concurrent.Executors
  * gives ordinary https URLs; a MediaSession queue entry gives a `content://` URI into
  * the player's own media provider; and a row from the local library names one of its
  * own tracks, whose cover MediaStore keeps. A row does not care which it is holding, so
- * the split is decided here, and a queue entry whose provider refuses is crossed with
- * the Web API by its track URI instead.
+ * the split is decided here.
+ *
+ * Each source also has somewhere to fall back to when it cannot answer for its own row:
+ * a queue entry whose provider refuses is crossed with the Web API by its track URI, and
+ * a local file with no art anywhere on the device is looked up by name in [LocalMetadata].
  *
  * Note App Remote's editorial sections carry an *empty* image id rather than none at
  * all — `image=` in the probe's dump — which is why blankness is checked and not just
@@ -34,6 +37,7 @@ class ArtworkLoader(
     private val context: Context,
     private val remote: SpotifyRemote,
     private val web: SpotifyWebApi,
+    private val local: LocalMetadata? = null,
 ) {
 
     companion object {
@@ -55,12 +59,21 @@ class ArtworkLoader(
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
+    /**
+     * Rows every source has already been asked about, with nothing to show for it. A
+     * miss is not cached as a bitmap, so without this a coverless row would go through
+     * the whole chain again on every rebind — which on a scrolling list is a lot of work
+     * to arrive back at nothing.
+     */
+    private val settled = HashSet<String>()
+
     fun load(item: ListItem, onBitmap: (Bitmap) -> Unit) {
         val id = imageId(item) ?: return
         cache.get(id)?.let {
             onBitmap(it)
             return
         }
+        if (id in settled) return
         when {
             id.startsWith("http") -> loadHttp(id, onBitmap)
             id.startsWith(LocalLibrary.ART_PREFIX) -> loadFromMediaStore(id, onBitmap)
@@ -115,10 +128,43 @@ class ArtworkLoader(
             val bitmap = LocalLibrary.artwork(context, trackId, TARGET_PX)
             main.post {
                 if (bitmap == null) {
-                    Log.d(TAG, "no cover for local track $trackId")
+                    lookUpCover(id, trackId, onBitmap)
                 } else {
                     cache.put(id, bitmap)
                     onBitmap(bitmap)
+                }
+            }
+        }
+    }
+
+    /**
+     * No art in the index and none in the file: ask the catalogues by name. This is the
+     * local mirror of [crossReference] — a source that cannot answer for its own row,
+     * and a second one that can be asked about it.
+     */
+    private fun lookUpCover(id: String, trackId: Long, onBitmap: (Bitmap) -> Unit) {
+        val metadata = local
+        if (metadata == null) {
+            settled += id
+            return
+        }
+        metadata.coverForTrack(trackId) { bytes, conclusive ->
+            if (bytes == null) {
+                Log.d(TAG, "no cover anywhere for local track $trackId")
+                // Only when the catalogues actually answered: a lookup that failed on a
+                // dropped connection deserves another go, not a permanent blank.
+                if (conclusive) settled += id
+                return@coverForTrack
+            }
+            executor.execute {
+                val bitmap = decodeScaled(bytes)
+                main.post {
+                    if (bitmap == null) {
+                        settled += id
+                    } else {
+                        cache.put(id, bitmap)
+                        onBitmap(bitmap)
+                    }
                 }
             }
         }
