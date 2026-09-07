@@ -7,7 +7,12 @@ import com.spotify.protocol.types.ListItem
  * Navigation over the browse tree: where we are, what is on screen, and what a tap
  * means. Holds no views.
  *
- * The tree has two sources, because one of them is not enough. App Remote's `ContentApi`
+ * The tree has three sources, because no one of them is enough — and because the third
+ * is the only one nobody can withdraw. [LocalLibrary] reads the files on the device, so
+ * the root has something in it before Spotify is connected, after Spotify refuses, and
+ * with no network at all.
+ *
+ * The two Spotify sources are there for the reason they always were. App Remote's `ContentApi`
  * returns only Spotify's editorial sections — measured on the device, `default`,
  * `navigation` and `automotive` all answer with the same thirty rows of "Creato per …"
  * and none of them contains the user's own playlists. So the root is the user's library
@@ -18,9 +23,10 @@ import com.spotify.protocol.types.ListItem
  * Items either have children (open them) or are playable (play them); some are both, in
  * which case a tap opens, because opening is the recoverable choice.
  */
-class SpotifyBrowser(
+class LibraryBrowser(
     private val remote: SpotifyRemote,
     private val web: SpotifyWebApi? = null,
+    private val local: LocalLibrary? = null,
     private val authoriseTitle: String = "Connect your library",
     private val authoriseSubtitle: String = "Your playlists and saved songs, in one step",
 ) {
@@ -36,7 +42,7 @@ class SpotifyBrowser(
     )
 
     private companion object {
-        const val TAG = "SpotifyBrowser"
+        const val TAG = "LibraryBrowser"
 
         /** Collections App Remote can start at a given index. */
         val CONTEXT_PREFIXES = listOf("spotify:playlist:", "spotify:album:")
@@ -59,6 +65,13 @@ class SpotifyBrowser(
      * consent runs in a browser, which is the host's business, not this class's.
      */
     var onAuthoriseRequested: (() -> Unit)? = null
+
+    /**
+     * Asked for when the user taps the row that offers access to the music on the
+     * device. Same shape as [onAuthoriseRequested]: the permission dialog belongs to
+     * the Activity, not to a class that holds no views.
+     */
+    var onLocalPermissionRequested: (() -> Unit)? = null
 
     val isAtRoot: Boolean get() = stack.isEmpty()
 
@@ -88,6 +101,8 @@ class SpotifyBrowser(
             load(item)
         } else if (item.uri == SpotifyWebApi.AUTHORISE_URI) {
             onAuthoriseRequested?.invoke()
+        } else if (item.uri == LocalLibrary.PERMISSION_URI) {
+            onLocalPermissionRequested?.invoke()
         } else if (item.playable) {
             play(item, if (position >= 0) position else items.indexOf(item))
         }
@@ -112,6 +127,11 @@ class SpotifyBrowser(
         val library = web?.takeIf { it.isAuthorised() }
 
         when {
+            // The local player takes the node the track was tapped in as its queue,
+            // which is the whole reason this app has a player of its own: the rest of
+            // the album is ours to decide, not something to hope a remote one publishes.
+            LocalLibrary.isLocal(item.uri) -> local?.play(context, item.uri, position)
+
             context != null && CONTEXT_PREFIXES.any { context.startsWith(it) } && position >= 0 ->
                 remote.playAt(context, position) { reason ->
                     Log.i(TAG, "no context playback for $context ($reason); playing the track alone")
@@ -164,15 +184,10 @@ class SpotifyBrowser(
 
         val library = web?.takeIf { it.isAuthorised() }
         when {
-            // Without a Web API token the tree is Spotify's recommendations, which is
-            // not nothing but is not the user's library either. Rather than degrade
-            // quietly, the root says so in a row that starts the consent.
-            item == null ->
-                if (library != null) library.library(onItems, onError)
-                else remote.loadRoot(
-                    onItems = { loaded -> onItems(listOf(authoriseNode()) + loaded) },
-                    onError = onError,
-                )
+            item == null -> loadRootItems(onItems, onError)
+
+            LocalLibrary.isLocal(item.uri) ->
+                local?.children(item.uri, onItems, onError) ?: onError("no local library")
 
             item.uri == SpotifyWebApi.LIKED_URI ->
                 library?.savedTracks(onItems, onError) ?: onError("not authorised")
@@ -192,6 +207,40 @@ class SpotifyBrowser(
                 }
 
             else -> remote.loadChildren(item, 0, onItems, onError)
+        }
+    }
+
+    /**
+     * The root: the device's own music first, then whatever Spotify will lend us.
+     *
+     * The order is deliberate. The local row is the one that is always there, so it is
+     * the one that is always first; Spotify's part of the root can fail, and a failure
+     * that leaves the tree with rows in it is not an error worth painting over them —
+     * the header's connect button already says the link is down.
+     *
+     * Without a Web API token the Spotify part is its recommendations, which is not
+     * nothing but is not the user's library either, so a row offering the consent goes
+     * in front of them. With no Spotify at all, the files on the device are the whole
+     * tree, and that is a working app rather than a degraded one.
+     */
+    private fun loadRootItems(onItems: (List<ListItem>) -> Unit, onError: (String) -> Unit) {
+        val rows = listOfNotNull(local?.rootNode())
+        val library = web?.takeIf { it.isAuthorised() }
+        val onSpotifyError: (String) -> Unit = { reason ->
+            if (rows.isEmpty()) onError(reason) else {
+                Log.i(TAG, "Spotify's part of the root failed ($reason); keeping the local one")
+                onItems(rows)
+            }
+        }
+        when {
+            library != null -> library.library({ onItems(rows + it) }, onSpotifyError)
+
+            remote.isConnected -> remote.loadRoot(
+                onItems = { loaded -> onItems(rows + authoriseNode() + loaded) },
+                onError = onSpotifyError,
+            )
+
+            else -> onItems(rows)
         }
     }
 

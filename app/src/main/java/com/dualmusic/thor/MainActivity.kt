@@ -1,7 +1,9 @@
 package com.dualmusic.thor
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.Bundle
@@ -23,8 +25,10 @@ import com.spotify.protocol.types.ListItem
  * Two layers, deliberately separate:
  *  - [MediaHub] says what is playing, for every player on the device, and drives both
  *    panels. It follows whatever plays, whichever app is playing it.
- *  - [SpotifyRemote] adds what MediaSession cannot do: browse a library and start a
- *    chosen item. Once something plays, MediaHub reports it like anything else.
+ *  - [LibraryBrowser] adds what MediaSession cannot do: browse a library and start a
+ *    chosen item. Its sources are Spotify, which lends us what it feels like lending,
+ *    and [LocalLibrary], which is the music on the device and answers to nobody. Once
+ *    something plays, MediaHub reports it like anything else, whichever one started it.
  */
 class MainActivity : Activity(), ControlsBinder.Actions {
 
@@ -34,6 +38,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
         /** One shoulder-trigger press is worth about a chorus. */
         private const val NUDGE_MS = 10_000L
+
+        private const val REQUEST_LOCAL_MEDIA = 41
     }
 
     private lateinit var hub: MediaHub
@@ -42,19 +48,25 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     private lateinit var spotify: SpotifyRemote
     // Cached under cacheDir: the system may reclaim it, and losing lyrics costs a lookup.
-    private val lyricsRepository by lazy { LyricsRepository(java.io.File(cacheDir, "lyrics")) }
+    private val lyricsRepository by lazy {
+        LyricsRepository(java.io.File(cacheDir, "lyrics"), localLibrary)
+    }
     private val webApi by lazy { SpotifyWebApi(this) }
+    // The application context on purpose: the library outlives this activity, and the
+    // service it starts is what keeps the music going once the activity is gone.
+    private val localLibrary by lazy { LocalLibrary(applicationContext) }
     private val audio by lazy { getSystemService(AudioManager::class.java) }
     private var searchMode = false
     private var searchResults: List<ListItem> = emptyList()
     private var queueMode = false
     private var lyricsKey: String? = null
     private var lyrics: Lyrics = Lyrics.NONE
-    private lateinit var browser: SpotifyBrowser
+    private lateinit var browser: LibraryBrowser
     private lateinit var artwork: ArtworkLoader
     private var spotifyStatus: SpotifyRemote.Status = SpotifyRemote.Status.Disconnected
-    private var browseState: SpotifyBrowser.State? = null
+    private var browseState: LibraryBrowser.State? = null
     private var askedForSpotifyConsent = false
+    private var askedForMediaPermission = false
     private var lyricsMode = false
 
     private var plan = DisplayRouter.Plan(null, controlsOnPresentation = true)
@@ -90,13 +102,15 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         hub = MediaHub(applicationContext)
         spotify = SpotifyRemote(this)
         artwork = ArtworkLoader(this, spotify, webApi)
-        browser = SpotifyBrowser(
+        browser = LibraryBrowser(
             spotify,
             webApi,
+            localLibrary,
             authoriseTitle = getString(R.string.connect_library),
             authoriseSubtitle = getString(R.string.connect_library_hint),
         )
         browser.onAuthoriseRequested = { SpotifyWebAuth.authorize(this) }
+        browser.onLocalPermissionRequested = { requestLocalMediaAccess() }
     }
 
     override fun onStart() {
@@ -106,6 +120,9 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         applyPlan()
         startHub()
         browser.observe { state -> runOnUiThread { browseState = state; renderBrowse() } }
+        // The tree no longer waits for Spotify: the device's own music is in it, and it
+        // is there with no network, no account and no App Remote link.
+        if (browser.isAtRoot) browser.loadRoot()
         connectSpotify()
         handler.post(ticker)
     }
@@ -162,11 +179,15 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         when (status) {
             is SpotifyRemote.Status.Connected -> {
                 askedForSpotifyConsent = false
-                browser.loadRoot()
+                // Only from the root: a link that comes up while the user is three
+                // levels into an album should not walk them back out of it.
+                if (browser.isAtRoot) browser.loadRoot()
             }
 
             is SpotifyRemote.Status.Failed -> {
-                browser.clear()
+                // Not clear(): Spotify failing costs the app Spotify's rows, not the
+                // device's own, and an empty tree would be a lie about what is available.
+                if (browser.isAtRoot) browser.loadRoot()
                 // First run on a device: Spotify wants the user to approve us. Ask once,
                 // through our own SSO intent (see SpotifyNativeAuth for why not the SDK).
                 if (!askedForSpotifyConsent) {
@@ -529,6 +550,57 @@ class MainActivity : Activity(), ControlsBinder.Actions {
      */
     override fun onBrowseBack() {
         handleBack()
+    }
+
+    /**
+     * READ_MEDIA_AUDIO, asked for where it is used: the row that offers the device's
+     * music is the only thing that leads here.
+     *
+     * POST_NOTIFICATIONS rides along because the player is a foreground service and its
+     * transport notification is what that service is required to show; refusing it costs
+     * the notification, not the music, so nothing here depends on the answer.
+     *
+     * Android stops showing the dialog after a second refusal, and from then on the
+     * only place the permission can be given is the app's own settings page — so that
+     * is where a tap goes once asking has stopped working.
+     */
+    private fun requestLocalMediaAccess() {
+        if (LocalLibrary.hasPermission(this)) {
+            browser.loadRoot()
+            return
+        }
+        val canAsk = !askedForMediaPermission ||
+            shouldShowRequestPermissionRationale(Manifest.permission.READ_MEDIA_AUDIO)
+        if (!canAsk) {
+            openAppSettings()
+            return
+        }
+        askedForMediaPermission = true
+        requestPermissions(
+            arrayOf(Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_LOCAL_MEDIA,
+        )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_LOCAL_MEDIA) return
+        // Granted or refused, the root row is a different row now: reload it either way.
+        if (browser.isAtRoot) browser.loadRoot()
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", packageName, null))
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "no settings page for this app", e)
+        }
     }
 
     override fun onGrantAccess() {

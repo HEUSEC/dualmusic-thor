@@ -68,6 +68,12 @@ class MediaHub(private val context: Context) {
     )
 
     data class Track(
+        /**
+         * The player's own id for this track, when it publishes one. Ours is a
+         * `dualmusic:local:track:` URI, which is what lets the lyrics lookup find the
+         * file on disk; Spotify publishes its track URI here, and many players nothing.
+         */
+        val mediaId: String?,
         val title: String?,
         val artist: String?,
         val album: String?,
@@ -392,6 +398,7 @@ class MediaHub(private val context: Context) {
         }
 
         return Track(
+            mediaId = metadata?.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
             title = title,
             artist = artist,
             album = album,

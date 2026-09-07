@@ -19,13 +19,20 @@ import java.util.concurrent.Executors
  * built for exactly this. Spotify's own lyrics are licensed from Musixmatch and are not
  * available through any public Spotify API, so they are not an option here.
  *
+ * A song played from this device is asked about first: a `.lrc` the user put next to
+ * the file is theirs and exact, so it wins over anything the network would return, and
+ * it is the only source that works with no network at all.
+ *
  * Lookups are keyed by artist/title/album/duration and run on one background thread.
  * What comes back is kept twice: in memory for this run, and as a file in [cacheDir] so
  * the same song after a restart costs nothing and asks LRCLIB nothing. Misses are cached
  * too — a track with no lyrics is worth one request, not one per play — but they expire,
  * because a missing song today may be in the database next month.
  */
-class LyricsRepository(private val cacheDir: File? = null) {
+class LyricsRepository(
+    private val cacheDir: File? = null,
+    private val local: LocalLibrary? = null,
+) {
 
     companion object {
         private const val TAG = "LyricsRepository"
@@ -41,6 +48,8 @@ class LyricsRepository(private val cacheDir: File? = null) {
         private const val KIND_SYNCED = "synced"
         private const val KIND_PLAIN = "plain"
         private const val KIND_NONE = "none"
+
+        private val SYNC_STAMP = Regex("""\[\d{1,2}:\d{2}""")
     }
 
     /**
@@ -64,8 +73,6 @@ class LyricsRepository(private val cacheDir: File? = null) {
      * found nothing", which the caller should render as an absence, not as an error.
      */
     fun request(track: MediaHub.Track, onResult: (Lyrics) -> Unit) {
-        val title = track.title ?: return
-        val artist = track.artist ?: return
         val key = keyOf(track)
 
         synchronized(cache) { cache[key] }?.let {
@@ -76,12 +83,7 @@ class LyricsRepository(private val cacheDir: File? = null) {
         inFlight = key
 
         executor.execute {
-            // Disk first: a hit here is a song we have already looked up on this device.
-            val source = readCached(key) ?: fetch(title, artist, track).also { fetched ->
-                writeCached(key, fetched ?: Source(KIND_NONE, ""))
-            }
-            val lyrics = source?.let(::parse) ?: Lyrics.NONE
-
+            val lyrics = resolve(track, key)
             synchronized(cache) { cache[key] = lyrics }
             main.post {
                 if (inFlight == key) inFlight = null
@@ -89,6 +91,27 @@ class LyricsRepository(private val cacheDir: File? = null) {
             }
         }
     }
+
+    /**
+     * The file beside the song, then this device's own cache, then LRCLIB. A sidecar is
+     * never written to the cache: it is already on disk, and caching it would hide an
+     * edit the user makes to it.
+     */
+    private fun resolve(track: MediaHub.Track, key: String): Lyrics {
+        local?.lyricsFor(track.mediaId)?.takeIf { it.isNotBlank() }?.let { text ->
+            return parse(Source(if (isSynced(text)) KIND_SYNCED else KIND_PLAIN, text))
+        }
+        // LRCLIB is asked by name; a track with neither is not something it can answer.
+        val title = track.title ?: return Lyrics.NONE
+        val artist = track.artist ?: return Lyrics.NONE
+        val source = readCached(key) ?: fetch(title, artist, track).also { fetched ->
+            writeCached(key, fetched ?: Source(KIND_NONE, ""))
+        }
+        return source?.let(::parse) ?: Lyrics.NONE
+    }
+
+    /** An LRC file carries `[mm:ss.cc]` stamps; a plain text dump beside a song does not. */
+    private fun isSynced(text: String): Boolean = SYNC_STAMP.containsMatchIn(text)
 
     fun keyOf(track: MediaHub.Track): String =
         "${track.artist}|${track.title}|${track.album}|${track.durationMs / 1000}"

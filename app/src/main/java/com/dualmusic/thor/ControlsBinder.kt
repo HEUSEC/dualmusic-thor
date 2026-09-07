@@ -78,7 +78,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private var searchMode = false
     private var queueMode = false
     private var trackKey: String? = null
-    private var lastBrowseState: SpotifyBrowser.State? = null
+    private var lastBrowseState: LibraryBrowser.State? = null
     private var lastSpotifyStatus: SpotifyRemote.Status = SpotifyRemote.Status.Disconnected
     private var sourceLabel = ""
     private var track: MediaHub.Track? = null
@@ -351,7 +351,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
         }
     }
 
-    fun bindBrowse(state: SpotifyBrowser.State?, spotify: SpotifyRemote.Status) {
+    fun bindBrowse(state: LibraryBrowser.State?, spotify: SpotifyRemote.Status) {
         lastBrowseState = state
         lastSpotifyStatus = spotify
         // Search and the queue borrow the same list; neither may be painted over by a
@@ -381,19 +381,21 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnSpotify.text = context.getString(R.string.connect)
 
         val atRoot = state == null || !state.canGoBack
-        val canGoBack = connected && !atRoot
+        val canGoBack = !atRoot
         btnBrowseBack.isEnabled = canGoBack
         btnBrowseBack.alpha = if (canGoBack) 1f else 0.35f
         browseTitle.text = when {
-            !connected -> "Spotify"
             atRoot -> context.getString(R.string.browse_root)
             else -> state?.title.orEmpty()
         }
         val crumb = state?.crumb.orEmpty()
         browseCrumb.text = crumb
-        browseCrumb.visibility = if (connected && crumb.isNotEmpty()) View.VISIBLE else View.GONE
+        browseCrumb.visibility = if (crumb.isNotEmpty()) View.VISIBLE else View.GONE
 
-        if (!connected) {
+        // Spotify being down is only worth a whole screen when there is nothing else to
+        // show. The device's own music is in this tree too, and it does not care whether
+        // Spotify answered: rows win over a status message.
+        if (!connected && state?.items.isNullOrEmpty()) {
             adapter.submit(emptyList())
             browseList.visibility = View.GONE
             browseMessage.visibility = View.GONE

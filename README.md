@@ -16,19 +16,22 @@ drawables: no component library, no icon pack, no bitmaps.
 
 ## What this release does
 
-**1.0 is a Spotify front-end.** Spotify is the one source that can be both browsed and
-started from another app, so it is the only one this version claims. Everything else
-that plays on the device still reaches the screens and the transport through
-MediaSession — that layer is source-agnostic and always has been — but it is not
+**Two sources it starts, and everything else it controls.** Spotify is the one *service*
+that can be both browsed and started from another app. The files on the device are the
+other, and the only one nobody can withdraw: Spotify decides what its API lends us and
+changed those rules twice in 2026, while a folder of MP3s answers to the user alone.
+Everything else that plays on the device still reaches the screens and the transport
+through MediaSession — that layer is source-agnostic and always has been — but it is not
 advertised, and nothing in the app is shaped around it.
 
 | Source | Browse & start playback | Control what plays | How |
 |---|---|---|---|
 | Spotify | yes (Premium) | yes | App Remote SDK, `ContentApi` + Web API library |
+| On this device | yes | yes | `MediaStore` + a `MediaSession` of our own |
 | Anything else playing | no | yes, incidentally | MediaSession |
 
-Two sources were cut from this release rather than shipped half-built, and both are
-worth writing down because the reasons are external, not a matter of time.
+One source was cut rather than shipped half-built, and the reason is worth writing down
+because it is external, not a matter of time.
 
 **Apple Music refuses third-party clients.** It does expose a `MediaBrowserService`
 (`com.apple.android.music.player.MediaPlaybackService`), but its `onGetRoot()` returns
@@ -45,9 +48,40 @@ and therefore a paid Apple Developer Program membership; that SDK is also stale 
 generated 2019, still hand-downloaded AARs). So Apple Music is not a source here. What
 it publishes as a MediaSession is still controllable, like any other player.
 
-**A local MP3 source is simply not written yet.** MediaStore, ID3 and a `MediaSession` of
-our own is the next real piece of work, and it is the only way this app ever owns a
-queue rather than borrowing one.
+## The local source, and the queue it lets us own
+
+`LocalLibrary` reads `MediaStore.Audio` — albums, artists, all tracks — and hands the
+browse list the same `ListItem` rows Spotify's tree produces, under synthetic
+`dualmusic:local:` URIs so nothing ever tries to play one through App Remote.
+`LocalPlaybackService` plays them: a `MediaPlayer` behind a `MediaSession` of our own, in
+a foreground service, with audio focus and the becoming-noisy broadcast handled the way
+any media app must.
+
+Publishing a session is the whole trick. `MediaHub` already watches every session on the
+device, so our own is picked up exactly like Spotify's and the now-playing panel, the
+transport, the seek bar, the queue list and the gamepad work with no changes at all.
+
+It is also the only place the app *owns* a queue instead of borrowing one. Tapping the
+third song of an album starts a queue of that album at index two and publishes it with
+`setQueue`, so "up next" is the rest of the record rather than whatever a remote player
+decided to autoplay.
+
+Covers come from `ContentResolver.loadThumbnail`, with the file's own embedded picture
+read by `MediaMetadataRetriever` behind it — that is the case the index cannot cover, a
+file dropped in since the last scan. `ArtworkLoader` is still the one place that knows
+which kind of reference a row is holding.
+
+Lyrics need no new lookup: `LyricsRepository` keys off title, artist and duration, so
+LRCLIB works unchanged. A `.lrc` next to the file is asked for first and wins, since it
+is the user's own and the only source that works with no network at all — best effort,
+though: `READ_MEDIA_AUDIO` grants direct access to audio files and nothing else, so a
+sibling `.lrc` is readable only where the app has been given wider storage access than
+that. A refusal is not an error; the network answers instead.
+
+**Deliberately out of scope.** Gapless playback and crossfade — `MediaPlayer` can chain
+with `setNextMediaPlayer`, but getting it right is its own piece of work. Playlists on
+disk (`.m3u`). ExoPlayer: the project is framework-only apart from the Spotify SDK, and
+there is no reason for that to change here.
 
 ## How Spotify is used, and what it refuses
 
@@ -144,7 +178,7 @@ Check it with the probe:
 ```sh
 adb shell am start -n com.dualmusic.thor/.SpotifyProbeActivity     # connect + dump tree
 adb shell am start -n com.dualmusic.thor/.SpotifyProbeActivity -e native true   # consent
-adb logcat -s SpotifyProbe SpotifyRemote SpotifyNativeAuth SpotifyBrowser
+adb logcat -s SpotifyProbe SpotifyRemote SpotifyNativeAuth LibraryBrowser
 ```
 
 ## Display layout — what the hardware dictates
@@ -165,7 +199,7 @@ stored in SharedPreferences. Default: controls on the small panel, now playing o
 Touch does reach a Presentation on display 4 — verified by tapping its swap button and
 watching the panels exchange.
 
-## Permission
+## Permissions
 
 `MediaSessionManager.getActiveSessions()` requires an *enabled notification listener* as
 proof of authorisation, which is why `MediaNotificationListener` exists — it reads no
@@ -173,6 +207,17 @@ notifications at all. Grant it in-app (the banner opens the per-app settings scr
 
 ```sh
 adb shell cmd notification allow_listener com.dualmusic.thor/com.dualmusic.thor.MediaNotificationListener
+```
+
+`READ_MEDIA_AUDIO` is what the local source needs, and it is asked for where it is used:
+until it is granted, the row at the root of the browse tree is the ask itself rather than
+the library. Refused twice, Android stops showing the dialog, so from then on that row
+opens the app's settings page instead. `POST_NOTIFICATIONS` rides along with the request
+because the player is a foreground service and its transport notification is what that
+service is required to show; refusing it costs the notification, not the music.
+
+```sh
+adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
 ```
 
 ## Design notes
