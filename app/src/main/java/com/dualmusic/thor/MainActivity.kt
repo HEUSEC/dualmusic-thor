@@ -127,6 +127,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         applyPlan()
         startHub()
         browser.observe { state -> runOnUiThread { browseState = state; renderBrowse() } }
+        // A file copied onto the device while the app is open should appear in it.
+        localLibrary.observe { browser.reload(LibraryBrowser.Source.LOCAL) }
         connectSpotify()
         handler.post(ticker)
     }
@@ -141,6 +143,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         super.onStop()
         handler.removeCallbacks(ticker)
         hub.stop()
+        localLibrary.stopObserving()
         spotify.disconnect()
         displayManager.unregisterDisplayListener(displayListener)
         dismissPresentation()

@@ -206,6 +206,12 @@ MediaSession, so the panel, the notification and the lyrics lookup all see a nam
 instead of a file name. Browse rows are corrected the same way, through the same cached
 lookup the cover already pays for.
 
+The library also watches itself. A `ContentObserver` on `MediaStore.Audio.Media` reloads
+the level on screen when the music on the device changes, without moving off it — because
+a local source that cannot see a file until the app is restarted defeats the point of
+being local. Copying one album fires a notification per file and a few more as the
+scanner catches up, so they are collapsed into one reload 700 ms after the last of them.
+
 One limit remains: a file with no usable name *and* no folders cannot be identified at
 all. That needs acoustic fingerprinting (AcoustID/Chromaprint), a native library this
 project does not take on. Browse rows for **albums** are still left as MediaStore reports

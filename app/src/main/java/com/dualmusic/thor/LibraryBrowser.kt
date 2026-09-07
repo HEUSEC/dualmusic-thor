@@ -146,6 +146,16 @@ class LibraryBrowser(
         if (this.source == source && stack.isEmpty()) load(null)
     }
 
+    /**
+     * Re-reads the level on screen without moving off it. Used when the library itself
+     * changed under us — a file copied onto the device — where the user is still looking
+     * at whatever they were looking at and only its contents are stale.
+     */
+    fun reload(source: Source) {
+        if (this.source != source) return
+        load(stack.lastOrNull())
+    }
+
     /** A tap on a row: descend when possible, otherwise play it. */
     fun onItemTapped(item: ListItem, position: Int = -1) {
         Log.i(TAG, "tapped ${item.title} playable=${item.playable} children=${item.hasChildren} uri=${item.uri}")

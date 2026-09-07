@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -58,6 +59,13 @@ class LocalLibrary(private val context: Context) {
          * a contract years ago. The loader turns this into a `loadThumbnail` call.
          */
         const val ART_PREFIX = "dualmusic:local:art:"
+
+        /**
+         * How long to wait for MediaStore to stop changing before believing it. Copying
+         * one album fires a notification per file and then a few more as the scanner
+         * catches up; reloading on each of them would rebuild the list a dozen times.
+         */
+        private const val SETTLE_MS = 700L
 
         /** Tracks are read in album order; MediaStore packs disc and track into one number. */
         private const val DISC_MULTIPLIER = 1000
@@ -189,6 +197,41 @@ class LocalLibrary(private val context: Context) {
 
     /** Whether there is a library to open at all, which is only ever the permission. */
     val isAvailable: Boolean get() = hasPermission(context)
+
+    private var observer: ContentObserver? = null
+
+    /**
+     * Calls [onChanged] when the music on the device changes — a file copied on, a scan
+     * finishing, something deleted.
+     *
+     * Without this the library is whatever it was when the app started, which is the
+     * one thing a local source must not be: dropping a file on the device and finding
+     * the app cannot see it until it is restarted defeats the point of having it.
+     *
+     * A single copy sets off a burst of notifications rather than one, so they are
+     * collapsed: the callback fires once, [SETTLE_MS] after the last of them.
+     */
+    fun observe(onChanged: () -> Unit) {
+        if (observer != null || !isAvailable) return
+        val settle = Runnable(onChanged)
+        val watcher = object : ContentObserver(main) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                main.removeCallbacks(settle)
+                main.postDelayed(settle, SETTLE_MS)
+            }
+        }
+        resolver.registerContentObserver(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            /* notifyForDescendants = */ true,
+            watcher,
+        )
+        observer = watcher
+    }
+
+    fun stopObserving() {
+        observer?.let(resolver::unregisterContentObserver)
+        observer = null
+    }
 
     // --- browse ---------------------------------------------------------------
 
