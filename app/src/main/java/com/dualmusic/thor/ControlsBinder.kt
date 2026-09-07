@@ -1,5 +1,6 @@
 package com.dualmusic.thor
 
+import android.animation.ValueAnimator
 import android.graphics.Bitmap
 import android.media.session.PlaybackState
 import android.view.LayoutInflater
@@ -54,6 +55,10 @@ class ControlsBinder(root: View, private val actions: Actions) {
          */
         fun loadName(item: ListItem, onName: (title: String, subtitle: String?) -> Unit)
     }
+
+    private val ground: View = root.findViewById(R.id.controlsRoot)
+    private var paintedGround = ground.resources.getColor(R.color.ground, null)
+    private var tintAnimator: ValueAnimator? = null
 
     private val permissionBar: View = root.findViewById(R.id.permissionBar)
     private val sessionSwitcher: LinearLayout = root.findViewById(R.id.sessionSwitcher)
@@ -149,6 +154,19 @@ class ControlsBinder(root: View, private val actions: Actions) {
                 if (total > 0L) actions.onSeekTo(bar.progress.toLong() * total / bar.max)
             }
         })
+    }
+
+    /**
+     * The ground this panel stands on, which the record decides; see [ShellTint].
+     *
+     * The control panel takes the colour but never the rest: it is the one you touch,
+     * and dimming what someone is about to reach for helps nobody.
+     */
+    fun setGround(color: Int) {
+        if (color == paintedGround) return
+        tintAnimator?.cancel()
+        tintAnimator = Motion.tint(ground, paintedGround, color)
+        paintedGround = color
     }
 
     fun bind(snapshot: MediaHub.Snapshot) {

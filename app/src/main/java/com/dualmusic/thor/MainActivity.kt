@@ -15,9 +15,11 @@ import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import android.view.MotionEvent
 import android.widget.LinearLayout
 import android.widget.Toast
 import com.spotify.protocol.types.ListItem
+import java.util.concurrent.Executors
 
 /**
  * Owns the two panels and the wiring between the music sources and the screens.
@@ -40,6 +42,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         private const val NUDGE_MS = 10_000L
 
         private const val REQUEST_LOCAL_MEDIA = 41
+
+        /**
+         * How long nothing has to happen before the far panel rests.
+         *
+         * Both windows hold FLAG_KEEP_SCREEN_ON, which is right while music is playing
+         * and is exactly the problem when it stops: two panels of a handheld left lit
+         * on a paused song, for as long as it takes somebody to come back. Three
+         * minutes is longer than any gap between tracks and shorter than a coffee.
+         */
+        private const val AMBIENT_AFTER_MS = 3 * 60 * 1000L
     }
 
     private lateinit var hub: MediaHub
@@ -81,6 +93,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private var controlsBinder: ControlsBinder? = null
     private var lastSnapshot: MediaHub.Snapshot? = null
 
+    /** The palette's mint, and whatever the record playing has made of it. */
+    private val mint by lazy { getColor(R.color.ground) }
+    private var groundColor = 0
+    private var tintedArtwork: android.graphics.Bitmap? = null
+    private val tintExecutor = Executors.newSingleThreadExecutor()
+
+    private var ambient = false
+    private var wasPlaying = false
+    private val enterAmbient = Runnable { setAmbient(true) }
+
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
         override fun run() {
@@ -103,6 +125,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         goEdgeToEdge(window, keepNavigation = true)
         hostContainer = findViewById(R.id.hostContainer)
+        groundColor = mint
         displayManager = getSystemService(DisplayManager::class.java)
         hub = MediaHub(applicationContext)
         spotify = SpotifyRemote(this)
@@ -131,6 +154,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         localLibrary.observe { browser.reload(LibraryBrowser.Source.LOCAL) }
         connectSpotify()
         handler.post(ticker)
+        // Coming back to the app is itself a sign of life, and arms the rest timer.
+        wake()
     }
 
     override fun onResume() {
@@ -142,12 +167,28 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     override fun onStop() {
         super.onStop()
         handler.removeCallbacks(ticker)
+        handler.removeCallbacks(enterAmbient)
+        setAmbient(false)
         hub.stop()
         localLibrary.stopObserving()
         spotify.disconnect()
         displayManager.unregisterDisplayListener(displayListener)
         dismissPresentation()
         appliedPlan = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        tintExecutor.shutdownNow()
+    }
+
+    /**
+     * Any touch on this window wakes the panels. Only the press: a drag along the seek
+     * bar is one gesture, and asking the same question sixty times a second is waste.
+     */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) wake()
+        return super.dispatchTouchEvent(event)
     }
 
     /**
@@ -263,6 +304,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
      * through its own — because only this class knows which session is being followed.
      */
     private fun handleKey(keyCode: Int, event: KeyEvent): Boolean {
+        // Even a key this app does not use is somebody at the handheld.
+        wake()
         val track = lastSnapshot?.track
         when (keyCode) {
             KeyEvent.KEYCODE_BUTTON_A,
@@ -354,12 +397,14 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         appliedPlan = plan
         lastSnapshot?.let { render(it) }
         renderBrowse()
+        pushGround()
     }
 
     private fun showPresentation(display: android.view.Display, layoutRes: Int): Boolean = try {
         val p = PanelPresentation(this, display, layoutRes)
         p.onBack = { handleBack() }
         p.onKey = { code, event -> handleKey(code, event) }
+        p.onTouch = { wake() }
         p.doOnInflated { view -> bindPanel(layoutRes, view) }
         p.show()
         p.window?.let { goEdgeToEdge(it) }
@@ -388,6 +433,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         }
         lastSnapshot?.let { render(it) }
         renderBrowse()
+        pushGround()
     }
 
     private fun addToHost(layoutRes: Int, weight: Float): View {
@@ -413,6 +459,72 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         controlsBinder?.bind(snapshot)
         requestLyrics(snapshot.track)
         nowPlayingBinder?.setLyrics(lyrics)
+        applyGroundTint(snapshot.track?.artwork)
+
+        // Music starting is a sign of life; music stopping is when the clock starts.
+        val playing = snapshot.track?.isPlaying == true
+        if (playing != wasPlaying) {
+            wasPlaying = playing
+            wake()
+        }
+    }
+
+    // --- the record's colour, and resting -------------------------------------
+
+    /**
+     * The ground takes the hue of whatever is on screen.
+     *
+     * Keyed on the bitmap itself rather than on the track: metadata arrives in pieces
+     * and the cover is usually the last piece, so a track key would settle before there
+     * was anything to read. Sampling happens off the main thread — small, but it is
+     * arithmetic over a thousand pixels for every song — and the answer is dropped if
+     * the song has moved on by the time it lands.
+     */
+    private fun applyGroundTint(bitmap: android.graphics.Bitmap?) {
+        if (bitmap === tintedArtwork) return
+        tintedArtwork = bitmap
+        if (bitmap == null) {
+            setGround(mint)
+            return
+        }
+        tintExecutor.execute {
+            val hue = ShellTint.hueOf(bitmap)
+            runOnUiThread {
+                if (tintedArtwork === bitmap) setGround(ShellTint.recolour(mint, hue))
+            }
+        }
+    }
+
+    private fun setGround(color: Int) {
+        if (color == groundColor) return
+        groundColor = color
+        pushGround()
+    }
+
+    /** Both panels, whichever windows they are in this minute. */
+    private fun pushGround() {
+        nowPlayingBinder?.setGround(groundColor)
+        controlsBinder?.setGround(groundColor)
+        nowPlayingBinder?.setAmbient(ambient)
+    }
+
+    private fun setAmbient(enabled: Boolean) {
+        if (ambient == enabled) return
+        ambient = enabled
+        nowPlayingBinder?.setAmbient(enabled)
+    }
+
+    /**
+     * Anything that says somebody is there: a touch on either panel, a key, or the
+     * music itself starting. The panel comes back, and the clock is wound again unless
+     * something is playing — a record that is playing is its own reason to stay lit.
+     */
+    private fun wake() {
+        handler.removeCallbacks(enterAmbient)
+        setAmbient(false)
+        if (lastSnapshot?.track?.isPlaying != true) {
+            handler.postDelayed(enterAmbient, AMBIENT_AFTER_MS)
+        }
     }
 
     /**

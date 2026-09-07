@@ -19,6 +19,13 @@ object Motion {
     const val NORMAL = 180L
     const val SLOW = 240L
 
+    /**
+     * Colour takes far longer than anything else here. A ground that changes with the
+     * record is a change of light, not a change of content, and at the speed of a
+     * content swap it reads as a flash.
+     */
+    const val TINT = 600L
+
     val enter = DecelerateInterpolator()
     val exit = AccelerateInterpolator()
 
@@ -105,6 +112,27 @@ object Motion {
                 view.alpha = 1f
             }
             .start()
+    }
+
+    /**
+     * Moves a view's own background colour from [from] to [to].
+     *
+     * Returns the animator so the caller can cancel it when the next colour arrives —
+     * covers change faster than 600 ms when someone is skipping through an album, and
+     * two fades running at once fight over the same background.
+     */
+    fun tint(view: View, from: Int, to: Int, duration: Long = TINT): ValueAnimator? {
+        if (from == to) return null
+        if (!enabled) {
+            view.setBackgroundColor(to)
+            return null
+        }
+        return ValueAnimator.ofArgb(from, to).apply {
+            this.duration = duration
+            interpolator = enter
+            addUpdateListener { view.setBackgroundColor(it.animatedValue as Int) }
+            start()
+        }
     }
 
     /** One view gives way to another in the same place. */

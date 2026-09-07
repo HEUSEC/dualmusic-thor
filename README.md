@@ -393,8 +393,34 @@ adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
   takes the full width (no "no lyrics" message); no album or year drops that chip and the
   rest slide left; no duration removes the progress bar and the clock shows elapsed only;
   an unknown title falls back to the source app's name rather than the word "Unknown".
-- **Edge to edge.** Both windows hide the system bars, so the mint ground runs to the
+- **Edge to edge.** Both windows hide the system bars, so the ground runs to the
   panel edges as the canvas draws it.
+- **The ground takes the record's colour — its hue, and nothing else.** The cover
+  already tints the art card through the blurred copy behind it; the shell floated on a
+  fixed mint regardless, so the two disagreed on every record that was not green.
+  `ShellTint` samples the cover at 32x32, throws away every pixel too grey, too dark or
+  too pale to mean a colour, pools the rest into 36 buckets weighted by colourfulness
+  and averages the winning bucket *circularly*, since the mean of hue 350 and hue 10 is
+  0 and not 180. Only the hue is then taken: saturation and value stay at the palette's
+  own. That is the whole reason this is safe to do — every contrast figure in the spec
+  was measured against a colour of *this* tone, and a sleeve is free to be any tone at
+  all, so a black-and-white cover taken literally would put the ink at 1:1 against its
+  own ground. A record with no colour worth having keeps the mint: below 6% coloured
+  pixels the hue that survived the desaturation is noise, not a decision. The change
+  runs over 600 ms, four times slower than a content swap, because it is a change of
+  light rather than of content and at content speed it reads as a flash.
+- **The far panel rests, and drifts while it does.** Both windows hold
+  `FLAG_KEEP_SCREEN_ON`, which is right while music plays and is exactly the problem
+  when it stops: two panels of a handheld left lit on a paused song for as long as it
+  takes somebody to come back. Three minutes after the music stops — longer than any gap
+  between tracks, shorter than a coffee — the now-playing panel dims: the ground falls to
+  30% of its value at a little over half its saturation, and the shell fades with it,
+  because dimming the shell alone would have laid a pale card over a bright ground,
+  which is less contrast rather than less light. Nothing is hidden; a panel at rest has
+  not forgotten the song. Every minute it drifts 6dp diagonally over three seconds, so
+  no edge sits on one line of pixels for hours. A touch on either panel, any key, or the
+  music starting again ends it. **The control panel never rests** — it is the one you
+  touch, and dimming what somebody is reaching for helps nobody.
 
 - **Queue, volume and the gamepad are the session API's, not Spotify's.** The queue
   button appears only when the player publishes one (`MediaController.getQueue()`), and
@@ -499,6 +525,15 @@ The library and the controls, on the same device:
 - Your own playlist opens over the Web API; a followed one (403) falls back to App
   Remote and loads its thirty rows from there.
 
+With the radio off (airplane mode, Wi-Fi down, `ping` unreachable), cold-started with
+the app force-stopped first:
+
+- The panel opens on the source picker — MP3 / Spotify — with the now-playing panel on
+  the big screen and the picker on the small one, no network anywhere in it.
+- **MP3** opens "On this device": Albums, Artists, All tracks. Albums lists the records
+  MediaStore knows about, offline, including the untagged folders that browse under
+  their own names.
+
 And end to end with Spotify:
 
 - Consent completes, App Remote connects, `canPlayOnDemand=true` (Premium).
@@ -510,13 +545,20 @@ And end to end with Spotify:
 
 ## Next
 
-1. [Local MP3 source](https://github.com/HEUSEC/dualmusic-thor/issues/1): MediaStore, a
-   `MediaSession` of our own, and a queue this app owns rather than borrows — the one
-   source no API policy can withdraw.
-2. Colour from the artwork: tint the shell with the cover's own hue instead of the fixed
-   mint, which is what the design notes already promise.
-3. Ambient mode on the big panel once nothing has played for a while, with a pixel shift
-   — two panels stay lit for hours on a handheld.
+1. Finish [issue #1](https://github.com/HEUSEC/dualmusic-thor/issues/1)'s own acceptance
+   run: an album from a cold start with **no network at all** — covers on the big panel,
+   lyrics from a `.lrc` beside the file, the album as the queue on the small panel, and
+   the gamepad driving it. With the radio off the app cold-starts on the source picker
+   and the device's library browses (Albums, Artists, All tracks); the playback half of
+   that sentence has not been walked through end to end on the device.
+2. The `.lrc` beside the file is still best effort, and on this device it is not working
+   at all: `READ_MEDIA_AUDIO` grants the audio files and nothing else, so a sibling
+   `.lrc` under `/sdcard/Music` is unreadable and the file's own `SYLT`/`USLT` tag is
+   doing all of the offline work. Either the app asks for wider storage access at the
+   moment somebody puts one there, or it says so where they can see it.
+3. Ambient belongs to the now-playing panel alone. A control panel at full brightness
+   beside a resting one is right while the device is in someone's hands and wrong while
+   it is face up on a desk, and the app cannot currently tell those apart.
 
 ## Building a release
 

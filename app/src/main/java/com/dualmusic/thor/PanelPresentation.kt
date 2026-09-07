@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Bundle
 import android.view.Display
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 
@@ -39,12 +40,24 @@ class PanelPresentation(
      */
     var onKey: ((Int, KeyEvent) -> Boolean)? = null
 
+    /**
+     * A touch anywhere on this panel, reported before the panel itself sees it. Only
+     * the host knows whether the app is resting, and a touch is the plainest sign that
+     * it should not be.
+     */
+    var onTouch: (() -> Unit)? = null
+
     fun doOnInflated(block: (View) -> Unit) {
         panel?.let(block) ?: run { onInflated = block }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         onKey?.invoke(keyCode, event) == true || super.onKeyDown(keyCode, event)
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) onTouch?.invoke()
+        return super.dispatchTouchEvent(event)
+    }
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {

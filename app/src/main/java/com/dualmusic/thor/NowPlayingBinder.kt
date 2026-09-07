@@ -1,5 +1,6 @@
 package com.dualmusic.thor
 
+import android.animation.ValueAnimator
 import android.graphics.Bitmap
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -31,8 +32,25 @@ class NowPlayingBinder(root: View, onSeek: ((Long) -> Unit)? = null) {
         const val LYRIC_CURRENT_SP_READING = 35f
         const val INK = 0x12241E
         const val LYRIC_INK = 0xFF0C1F19.toInt()
+
+        /** Resting: legible from across a room, and not the brightest thing in it. */
+        const val AMBIENT_ALPHA = 0.45f
+
+        /**
+         * Pixel shift. Two panels on a handheld stay lit for as long as the music
+         * lasts, and this one holds a title in the same place the whole time; the shell
+         * drifts a few pixels so no edge sits over one line of pixels for hours.
+         * Slow enough at 3 s that the eye reads it as nothing at all.
+         */
+        const val SHIFT_DP = 6f
+        const val SHIFT_EVERY_MS = 60_000L
+        const val SHIFT_MS = 3_000L
+        val SHIFT_STEPS = arrayOf(
+            0f to 0f, 1f to 1f, -1f to 1f, -1f to -1f, 1f to -1f,
+        )
     }
 
+    private val ground: View = root.findViewById(R.id.npRoot)
     private val shell: View = root.findViewById(R.id.npShell)
     private val empty: View = root.findViewById(R.id.npEmpty)
     private val artCard: View = root.findViewById(R.id.npArtCard)
@@ -60,6 +78,23 @@ class NowPlayingBinder(root: View, onSeek: ((Long) -> Unit)? = null) {
     private var trackKey: String? = null
     private var boundArtwork: Bitmap? = null
     private var track: MediaHub.Track? = null
+
+    /** What the ground would be if the panel were awake, and what it actually is. */
+    private var groundColor = ground.resources.getColor(R.color.ground, null)
+    private var paintedGround = groundColor
+    private var tintAnimator: ValueAnimator? = null
+
+    private var ambient = false
+    private var shiftStep = 0
+    private val shift = object : Runnable {
+        override fun run() {
+            shiftStep = (shiftStep + 1) % SHIFT_STEPS.size
+            val (x, y) = SHIFT_STEPS[shiftStep]
+            val step = ground.resources.displayMetrics.density * SHIFT_DP
+            drift(x * step, y * step, SHIFT_MS)
+            ground.postDelayed(this, SHIFT_EVERY_MS)
+        }
+    }
 
     fun bind(snapshot: MediaHub.Snapshot) {
         val newTrack = snapshot.track
@@ -159,6 +194,70 @@ class NowPlayingBinder(root: View, onSeek: ((Long) -> Unit)? = null) {
             lyricsPainter.resize(LYRIC_SP_READING, LYRIC_CURRENT_SP_READING)
         } else {
             lyricsPainter.resize(LYRIC_SP, LYRIC_CURRENT_SP)
+        }
+    }
+
+    // --- ground and rest ------------------------------------------------------
+
+    /** The ground the shell floats on, which the record decides; see [ShellTint]. */
+    fun setGround(color: Int) {
+        if (groundColor == color) return
+        groundColor = color
+        repaintGround()
+    }
+
+    /**
+     * Ambient: nothing has played for a while, so the panel stops shouting.
+     *
+     * The ground goes down to a dim version of the same colour and the shell fades with
+     * it — dimming the shell alone would only have laid a pale card over a bright mint
+     * ground, which is not less light, it is less contrast. Whatever is on screen stays
+     * on screen: the point is a panel at rest, not a panel that has forgotten the song.
+     */
+    fun setAmbient(enabled: Boolean) {
+        if (ambient == enabled) return
+        ambient = enabled
+        repaintGround()
+        if (enabled) {
+            fade(AMBIENT_ALPHA, Motion.TINT, Motion.exit)
+            ground.postDelayed(shift, SHIFT_EVERY_MS)
+        } else {
+            ground.removeCallbacks(shift)
+            shiftStep = 0
+            fade(1f, Motion.NORMAL, Motion.enter)
+            drift(0f, 0f, Motion.NORMAL)
+        }
+    }
+
+    private fun repaintGround() {
+        val target = if (ambient) ShellTint.dim(groundColor) else groundColor
+        if (target == paintedGround) return
+        tintAnimator?.cancel()
+        tintAnimator = Motion.tint(ground, paintedGround, target)
+        paintedGround = target
+    }
+
+    /** Both faces of this panel: the one with a song on it and the one without. */
+    private fun fade(alpha: Float, duration: Long, interpolator: android.view.animation.Interpolator) {
+        if (!Motion.enabled) {
+            shell.alpha = alpha
+            empty.alpha = alpha
+            return
+        }
+        for (view in arrayOf(shell, empty)) {
+            view.animate().alpha(alpha).setDuration(duration).setInterpolator(interpolator).start()
+        }
+    }
+
+    private fun drift(x: Float, y: Float, duration: Long) {
+        if (!Motion.enabled) {
+            shell.translationX = x; shell.translationY = y
+            empty.translationX = x; empty.translationY = y
+            return
+        }
+        for (view in arrayOf(shell, empty)) {
+            view.animate().translationX(x).translationY(y)
+                .setDuration(duration).setInterpolator(Motion.enter).start()
         }
     }
 
