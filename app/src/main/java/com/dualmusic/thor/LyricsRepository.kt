@@ -93,13 +93,22 @@ class LyricsRepository(
     }
 
     /**
-     * The file beside the song, then this device's own cache, then LRCLIB. A sidecar is
-     * never written to the cache: it is already on disk, and caching it would hide an
-     * edit the user makes to it.
+     * The file beside the song, then the song's own tag, then this device's cache, then
+     * LRCLIB. Neither of the first two is written to the cache: both are already on
+     * disk, and caching them would hide an edit the user makes.
+     *
+     * The tag comes before the network for the obvious reason - it travelled with this
+     * recording, so it is about this recording - and for a less obvious one: a SYLT
+     * frame may carry a sync point per word, which is the only way this app ever gets
+     * word timings that are measured rather than estimated. LRCLIB has none: of 120
+     * entries sampled, 105 carried line-level timings and not one carried word-level.
      */
     private fun resolve(track: MediaHub.Track, key: String): Lyrics {
         local?.lyricsFor(track.mediaId)?.takeIf { it.isNotBlank() }?.let { text ->
             return parse(Source(if (isSynced(text)) KIND_SYNCED else KIND_PLAIN, text))
+        }
+        local?.embeddedLyricsFor(track.mediaId)?.let { embedded ->
+            return parse(Source(if (embedded.synced) KIND_SYNCED else KIND_PLAIN, embedded.text))
         }
         // LRCLIB is asked by name; a track with neither is not something it can answer.
         val title = track.title ?: return Lyrics.NONE

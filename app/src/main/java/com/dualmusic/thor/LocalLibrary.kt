@@ -313,6 +313,20 @@ class LocalLibrary(private val context: Context) {
         }
     }
 
+    /**
+     * The lyrics inside the file's own ID3 tag, when it carries any.
+     *
+     * Unlike the `.lrc` beside it, this needs no permission the app does not already
+     * hold: the audio file itself is exactly what READ_MEDIA_AUDIO grants. It is also
+     * the only source that can carry *real* word timings, since a SYLT frame may put a
+     * sync point on every word. Blocking; called from the lyrics lookup's own thread.
+     */
+    fun embeddedLyricsFor(trackUri: String?): Id3Lyrics.Embedded? {
+        if (trackUri == null || !trackUri.startsWith(TRACK_PREFIX)) return null
+        val id = trackUri.removePrefix(TRACK_PREFIX).toLongOrNull() ?: return null
+        return Id3Lyrics.read(context, contentUriFor(id))
+    }
+
     // --- queries --------------------------------------------------------------
 
     /**

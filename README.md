@@ -71,12 +71,39 @@ read by `MediaMetadataRetriever` behind it — that is the case the index cannot
 file dropped in since the last scan. `ArtworkLoader` is still the one place that knows
 which kind of reference a row is holding.
 
-Lyrics need no new lookup: `LyricsRepository` keys off title, artist and duration, so
-LRCLIB works unchanged. A `.lrc` next to the file is asked for first and wins, since it
-is the user's own and the only source that works with no network at all — best effort,
-though: `READ_MEDIA_AUDIO` grants direct access to audio files and nothing else, so a
-sibling `.lrc` is readable only where the app has been given wider storage access than
-that. A refusal is not an error; the network answers instead.
+### Lyrics, and how far word-by-word actually goes
+
+`LyricsRepository` keys off title, artist and duration, so LRCLIB works for a local file
+exactly as it does for anything else — and better since the lookup above runs, because a
+file called `duvet-boa.mp3` asks LRCLIB about *Duvet* by *bôa* rather than about
+`duvet-boa`.
+
+Three sources are tried in order, and the order is about trust:
+
+1. **A `.lrc` beside the file.** The user put it there, so it wins. Best effort, though:
+   `READ_MEDIA_AUDIO` grants direct access to audio files and nothing else, so a sibling
+   `.lrc` is readable only where the app has wider storage access than that. A refusal is
+   not an error.
+2. **The file's own ID3 tag.** This one needs no permission the app does not already
+   hold — the audio file itself is what `READ_MEDIA_AUDIO` grants — and it travelled with
+   the recording, so it is about *this* recording rather than about a track that shares
+   its name. `MediaMetadataRetriever` exposes neither of the frames that carry it, so
+   `Id3Lyrics` reads them: `SYLT` (synchronised) and `USLT` (plain).
+3. **LRCLIB**, as before.
+
+**Word-by-word is real, but only one of those sources can measure it.** `SYLT` sync
+points are not required to be lines — a tagger may put one on every word — so the frame
+is converted to *enhanced* LRC (`[mm:ss.xx]` where a line opens, `<mm:ss.xx>` per sync
+point inside it) and handed to the same `Lyrics.parseLrc` everything else goes through.
+A tag with one point per line therefore lands exactly where LRCLIB's lyrics land, and one
+with a point per word arrives already timed.
+
+LRCLIB cannot: sampled across 120 entries, 105 carried line-level timings and **not one**
+carried word-level. So for the common case the words are *estimated* — the gap to the
+next line shared out in proportion to how long each word is — which is convincing at an
+even delivery and wrong on a held note or a pause. `Lyrics.Word.estimated` marks which
+kind a timing is, so the difference is never lost, and the painter sweeps a gradient
+along the current word either way.
 
 ### Filling in what the files do not say
 
