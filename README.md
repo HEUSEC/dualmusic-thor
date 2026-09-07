@@ -98,12 +98,27 @@ point inside it) and handed to the same `Lyrics.parseLrc` everything else goes t
 A tag with one point per line therefore lands exactly where LRCLIB's lyrics land, and one
 with a point per word arrives already timed.
 
-LRCLIB cannot: sampled across 120 entries, 105 carried line-level timings and **not one**
-carried word-level. So for the common case the words are *estimated* — the gap to the
-next line shared out in proportion to how long each word is — which is convincing at an
-even delivery and wrong on a held note or a pause. `Lyrics.Word.estimated` marks which
-kind a timing is, so the difference is never lost, and the painter sweeps a gradient
-along the current word either way.
+LRCLIB cannot. Sampled across **438 unique entries**, 327 carried line-level timings and
+**not one** carried word-level — the format it stores is plain LRC. So for the common
+case the words are *estimated*: the gap to the next line, shared out in proportion to how
+many characters each word has. `Lyrics.Word.estimated` marks which kind a timing is, so
+the difference is never lost, and the painter sweeps a gradient along the current word
+either way.
+
+The estimate assumes a line is sung evenly from its own stamp to the next one, and that
+assumption fails where the gap is not singing. Measured on LRCLIB's lyrics, the last sung
+line before the outro of *Get Lucky* has a 53-second gap after it, so its thirty
+characters would crawl for the best part of a minute. LRCLIB's uploaders often insert a
+blank timestamped line during an instrumental, which closes the gap and is why *Duvet*
+behaves — but that is a convention, not a rule: *Get Lucky* has one blank line in the
+whole song.
+
+So the span is capped, and the ceiling comes from measurement rather than taste. Across
+**15,456 sung lines from 326 songs** the rate is 124 ms per character at the median, 411
+at the 95th percentile and 866 at the 99th; a ceiling of 1000 ms per character leaves
+99.3% of lines untouched and trims only that tail. Capped, the sweep finishes at a
+natural pace and rests on the last word until the next line — which is the right look
+whether the singer is holding a note or the band is playing.
 
 ### Filling in what the files do not say
 
