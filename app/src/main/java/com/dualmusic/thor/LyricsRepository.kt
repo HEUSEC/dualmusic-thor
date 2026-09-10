@@ -69,6 +69,20 @@ class LyricsRepository(
     private var inFlight: String? = null
 
     /**
+     * Throws away everything looked up so far, in memory and on disk.
+     *
+     * There is exactly one reason to do this: the *sources* changed. A folder granted
+     * through the document picker makes a `.lrc` readable that was not, and every miss
+     * cached for the week before that was an answer to a different question.
+     */
+    fun forget() {
+        synchronized(cache) { cache.clear() }
+        executor.execute {
+            cacheDir?.listFiles()?.forEach { it.delete() }
+        }
+    }
+
+    /**
      * Delivers lyrics for [track] on the main thread. [Lyrics.NONE] means "looked and
      * found nothing", which the caller should render as an absence, not as an error.
      */

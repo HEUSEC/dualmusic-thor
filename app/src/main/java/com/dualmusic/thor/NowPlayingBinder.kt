@@ -75,6 +75,7 @@ class NowPlayingBinder(root: View, onSeek: ((Long) -> Unit)? = null) {
             .apply { this.onSeek = onSeek }
 
     private var readingMode = false
+    private var lyricScale = 1f
     private var trackKey: String? = null
     private var boundArtwork: Bitmap? = null
     private var track: MediaHub.Track? = null
@@ -190,10 +191,25 @@ class NowPlayingBinder(root: View, onSeek: ((Long) -> Unit)? = null) {
             Motion.appear(artCard, Motion.SLOW)
             Motion.appear(meta, Motion.SLOW)
         }
-        if (enabled) {
-            lyricsPainter.resize(LYRIC_SP_READING, LYRIC_CURRENT_SP_READING)
+        applyLyricSize()
+    }
+
+    /**
+     * The words, sized to whoever is reading them rather than to the panel. Both sizes
+     * move together: the current line is bigger than its neighbours by design, and a
+     * scale that changed only one of them would flatten that.
+     */
+    fun setLyricScale(scale: Float) {
+        if (lyricScale == scale) return
+        lyricScale = scale
+        applyLyricSize()
+    }
+
+    private fun applyLyricSize() {
+        if (readingMode) {
+            lyricsPainter.resize(LYRIC_SP_READING * lyricScale, LYRIC_CURRENT_SP_READING * lyricScale)
         } else {
-            lyricsPainter.resize(LYRIC_SP, LYRIC_CURRENT_SP)
+            lyricsPainter.resize(LYRIC_SP * lyricScale, LYRIC_CURRENT_SP * lyricScale)
         }
     }
 

@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.SystemClock
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextPaint
@@ -13,6 +14,8 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.UpdateAppearance
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
 import android.view.animation.LinearInterpolator
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -37,6 +40,7 @@ class LyricsPainter(
         const val INK = 0x12241E
         const val CURRENT_INK = 0xFF0C1F19.toInt()
         const val MIN_FILL_MS = 60L
+        const val SETTLE_MS = 1000L
     }
 
     /**
@@ -73,6 +77,35 @@ class LyricsPainter(
     private var fillAnimator: ValueAnimator? = null
     private var lastPositionMs = 0L
 
+    /**
+     * A hand on the panel owns the scroll. While it is there — and for the moment the
+     * fling it leaves behind takes to die — the lines still restyle and the words still
+     * fill, but nothing drags the view back to the line being sung. That is the whole
+     * suppression: it lasts as long as the gesture and not a beat longer.
+     */
+    private var touching = false
+    private var settledAt = 0L
+    private var owedFollow = false
+
+    private val following: Boolean
+        get() = !touching && SystemClock.uptimeMillis() >= settledAt
+
+    init {
+        scroll.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                // A drag that starts on a line reaches the scroll view as a move, since
+                // the line took the press itself, so both openings have to count.
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> touching = true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    touching = false
+                    settledAt = SystemClock.uptimeMillis() + SETTLE_MS
+                }
+            }
+            // Never consume: the drag still scrolls and a tap on a line still seeks.
+            false
+        }
+    }
+
     /** Set where the panel can be touched: a tap on a line seeks to it. */
     var onSeek: ((Long) -> Unit)? = null
 
@@ -99,6 +132,7 @@ class LyricsPainter(
         currentWord = -2
         wordBounds = emptyList()
         container.removeAllViews()
+        owedFollow = false
         if (newLyrics.isEmpty) return
 
         val context = container.context
@@ -132,6 +166,7 @@ class LyricsPainter(
         if (!lyrics.synced) {
             // No timings: creep down the text in step with the track instead of jumping.
             if (durationMs <= 0L) return
+            if (!following) return
             val range = (container.height - scroll.height).coerceAtLeast(0)
             scroll.scrollTo(0, (range * (positionMs.toDouble() / durationMs)).toInt())
             return
@@ -146,6 +181,12 @@ class LyricsPainter(
             for (i in 0 until container.childCount) styleLine(i, i - index)
             land(index)
             measureWords(index)
+        }
+        // The scroll a hand refused is owed, not lost: pay it back the moment the panel
+        // is still again, so the words do not stay adrift until the next line lands.
+        if (owedFollow && following) {
+            owedFollow = false
+            container.getChildAt(currentLine)?.let { centre(it) }
         }
         sweep(index, positionMs)
     }
@@ -272,10 +313,16 @@ class LyricsPainter(
                 .setInterpolator(Motion.enter)
                 .start()
         }
-        view.post {
-            val target = view.top - (scroll.height / 2) + (view.height / 2)
-            scroll.smoothScrollTo(0, target.coerceAtLeast(0))
+        if (!following) {
+            owedFollow = true
+            return
         }
+        view.post { if (following) centre(view) else owedFollow = true }
+    }
+
+    private fun centre(view: View) {
+        val target = view.top - (scroll.height / 2) + (view.height / 2)
+        scroll.smoothScrollTo(0, target.coerceAtLeast(0))
     }
 
     /** LRC files mark instrumental gaps with a lone note or an empty line. */

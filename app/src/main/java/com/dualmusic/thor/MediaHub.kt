@@ -186,6 +186,26 @@ class MediaHub(private val context: Context) {
         if (playing) controller.transportControls.pause() else controller.transportControls.play()
     }
 
+    /**
+     * Silence from everything, whoever is making the noise. The sleep timer asks for
+     * this and not for a toggle: a player already paused must stay paused, and on a
+     * device with two players awake, stopping only the one in front is not sleep.
+     *
+     * The sessions are asked for afresh rather than read out of [controllers], because
+     * the hub only holds those while the app is started and a sleep timer rings, by
+     * design, long after the app was put down.
+     */
+    fun pauseAll() {
+        if (!hasPermission) return
+        val playing = try {
+            sessionManager.getActiveSessions(component).filter { isPlaying(it) }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "no notification listener access", e)
+            return
+        }
+        playing.forEach { it.transportControls.pause() }
+    }
+
     fun skipNext() {
         activeController()?.transportControls?.skipToNext()
     }

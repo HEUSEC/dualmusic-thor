@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A gamepad, drawn here rather than borrowed: a stroked body so it sits beside the
+     line-weight of the search and queue icons, with a filled pad and two buttons.
+     White so android:tint can colour it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineJoin="round"
+        android:pathData="M7,8H17A5,5 0 0,1 17,18H7A5,5 0 0,1 7,8Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.5,11.2h1.4v1.1h1.1v1.4h-1.1v1.1h-1.4v-1.1h-1.1v-1.4h1.1z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14.65,14.1A0.95,0.95 0 1,0 16.55,14.1A0.95,0.95 0 1,0 14.65,14.1Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M16.85,11.9A0.95,0.95 0 1,0 18.75,11.9A0.95,0.95 0 1,0 16.85,11.9Z" />
+</vector>

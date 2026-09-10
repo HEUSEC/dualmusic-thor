@@ -26,6 +26,15 @@ import com.spotify.protocol.types.ListItem
  */
 class ControlsBinder(root: View, private val actions: Actions) {
 
+    private companion object {
+        /** Resting: legible across a table, and not the brightest thing on it. */
+        const val AMBIENT_ALPHA = 0.45f
+        const val MINUTE_MS = 60_000L
+    }
+
+    /** One line of the settings list: what it is, what it says, and the tap that moves it. */
+    data class Line(val title: String, val value: String, val onTap: () -> Unit)
+
     interface Actions {
         fun onPrevious()
         fun onPlayPause()
@@ -41,6 +50,28 @@ class ControlsBinder(root: View, private val actions: Actions) {
         fun onGrantAccess()
         fun onConnectSpotify()
         fun onToggleLyrics()
+
+        /**
+         * The controller button: hand the big screen over to a game and take the small
+         * one, or come back to both.
+         */
+        fun onGameMode()
+
+        /** The sleep clock: each press is the next rung up, and off after the last. */
+        fun onSleepTimer()
+
+        /** The short list of things this app lets somebody change. */
+        fun onOpenSettings()
+
+        /** The heart in the transport row; only ever a song on this device. */
+        fun onToggleFavourite()
+
+        /** Hold the queue button: what is playing now becomes a playlist. */
+        fun onSaveQueue()
+
+        /** Hold a playlist row: it goes. */
+        fun onDeletePlaylist(item: ListItem)
+
         fun onOpenSearch()
         fun onSearch(query: String)
         fun onBrowseItemTapped(item: ListItem, position: Int)
@@ -57,8 +88,14 @@ class ControlsBinder(root: View, private val actions: Actions) {
     }
 
     private val ground: View = root.findViewById(R.id.controlsRoot)
-    private var paintedGround = ground.resources.getColor(R.color.ground, null)
+    private val shell: View = root.findViewById(R.id.controlsShell)
+
+    /** What the ground would be if the panel were awake, and what it actually is. */
+    private var groundColor = ground.resources.getColor(R.color.ground, null)
+    private var paintedGround = groundColor
     private var tintAnimator: ValueAnimator? = null
+    private var ambient = false
+    private var sleepMinutes = -1
 
     private val permissionBar: View = root.findViewById(R.id.permissionBar)
     private val sessionSwitcher: LinearLayout = root.findViewById(R.id.sessionSwitcher)
@@ -89,6 +126,11 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private val btnBrowseBack: ImageButton = root.findViewById(R.id.btnBrowseBack)
     private val btnSpotify: TextView = root.findViewById(R.id.btnSpotify)
     private val btnSearch: View = root.findViewById(R.id.btnSearch)
+    private val btnGameMode: ImageButton = root.findViewById(R.id.btnGameMode)
+    private val btnSleep: ImageButton = root.findViewById(R.id.btnSleep)
+    private val btnSettings: ImageButton = root.findViewById(R.id.btnSettings)
+    private val btnFavourite: ImageButton = root.findViewById(R.id.btnFavourite)
+    private val sleepLeft: TextView = root.findViewById(R.id.nearSleep)
     private val searchInput: EditText = root.findViewById(R.id.searchInput)
     private val headerTitles: View = root.findViewById(R.id.headerTitles)
     private val sourcePicker: View = root.findViewById(R.id.sourcePicker)
@@ -99,6 +141,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
     private var readingMode = false
     private var searchMode = false
     private var queueMode = false
+    private var settingsMode = false
     private var trackKey: String? = null
     private var lastBrowseState: LibraryBrowser.State? = null
     private var lastSpotifyStatus: SpotifyRemote.Status = SpotifyRemote.Status.Disconnected
@@ -120,6 +163,16 @@ class ControlsBinder(root: View, private val actions: Actions) {
         sourceSpotify.setOnClickListener { actions.onSourceChosen(LibraryBrowser.Source.SPOTIFY) }
         btnBrowseBack.setOnClickListener { actions.onBrowseBack() }
         nearTrackTap.setOnClickListener { actions.onToggleLyrics() }
+        btnGameMode.setOnClickListener { actions.onGameMode() }
+        btnSleep.setOnClickListener { actions.onSleepTimer() }
+        btnSettings.setOnClickListener { actions.onOpenSettings() }
+        btnFavourite.setOnClickListener { actions.onToggleFavourite() }
+        // The queue is the one list the app owns outright, so holding its button is
+        // where keeping it belongs. Nothing else in the header has a second meaning.
+        btnQueue.setOnLongClickListener {
+            actions.onSaveQueue()
+            true
+        }
         btnSearch.setOnClickListener {
             if (searchMode) actions.onSearch(searchInput.text.toString()) else actions.onOpenSearch()
         }
@@ -135,6 +188,11 @@ class ControlsBinder(root: View, private val actions: Actions) {
         browseList.adapter = adapter
         browseList.setOnItemClickListener { _, _, position, _ ->
             adapter.itemAt(position)?.onTap?.invoke()
+        }
+        browseList.setOnItemLongClickListener { _, _, position, _ ->
+            val hold = adapter.itemAt(position)?.onLongTap
+            hold?.invoke()
+            hold != null
         }
 
         nearSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -163,10 +221,60 @@ class ControlsBinder(root: View, private val actions: Actions) {
      * and dimming what someone is about to reach for helps nobody.
      */
     fun setGround(color: Int) {
-        if (color == paintedGround) return
+        groundColor = color
+        repaintGround()
+    }
+
+    /**
+     * Resting. This is the panel under the thumbs, so it only dims: the drift that
+     * keeps the far panel off one line of pixels would be motion under a hand that is
+     * about to touch it, and any touch here is a wake anyway.
+     */
+    fun setAmbient(enabled: Boolean) {
+        if (ambient == enabled) return
+        ambient = enabled
+        repaintGround()
+        if (enabled) {
+            fade(AMBIENT_ALPHA, Motion.TINT, Motion.exit)
+        } else {
+            fade(1f, Motion.NORMAL, Motion.enter)
+        }
+    }
+
+    /**
+     * How long is left on the sleep clock. This arrives with the progress tick, several
+     * times a second, and is worth painting only when the minute on it changes.
+     */
+    fun setSleep(remainingMs: Long) {
+        val minutes = if (remainingMs <= 0L) 0 else ((remainingMs + MINUTE_MS - 1) / MINUTE_MS).toInt()
+        if (minutes == sleepMinutes) return
+        sleepMinutes = minutes
+        btnSleep.imageTintList = tint(if (minutes > 0) R.color.accent else R.color.ink)
+        btnSleep.contentDescription = btnSleep.context.getString(R.string.sleep_timer)
+        sleepLeft.visibility = if (minutes > 0) View.VISIBLE else View.GONE
+        if (minutes > 0) {
+            sleepLeft.text = sleepLeft.context.getString(R.string.sleep_left, minutes)
+        }
+    }
+
+    private fun repaintGround() {
+        val target = if (ambient) ShellTint.dim(groundColor) else groundColor
+        if (target == paintedGround) return
         tintAnimator?.cancel()
-        tintAnimator = Motion.tint(ground, paintedGround, color)
-        paintedGround = color
+        tintAnimator = Motion.tint(ground, paintedGround, target)
+        paintedGround = target
+    }
+
+    private fun fade(
+        alpha: Float,
+        duration: Long,
+        interpolator: android.view.animation.Interpolator,
+    ) {
+        if (!Motion.enabled) {
+            shell.alpha = alpha
+            return
+        }
+        shell.animate().alpha(alpha).setDuration(duration).setInterpolator(interpolator).start()
     }
 
     fun bind(snapshot: MediaHub.Snapshot) {
@@ -265,6 +373,57 @@ class ControlsBinder(root: View, private val actions: Actions) {
         android.content.res.ColorStateList.valueOf(btnQueue.context.getColor(colorRes))
 
     /** The player's own queue, in place of the browse tree. */
+    /**
+     * The settings, drawn through the browse list. They are rows with a value on the
+     * right and a tap that moves it, which is what every row in this app already is —
+     * so this needs no panel of its own, and behaves like the rest of the list under a
+     * thumb.
+     */
+    fun setSettingsMode(enabled: Boolean) {
+        settingsMode = enabled
+        btnSettings.imageTintList = tint(if (enabled) R.color.accent else R.color.ink)
+        if (!enabled) bindBrowse(lastBrowseState, lastSpotifyStatus)
+    }
+
+    fun showSettings(lines: List<Line>) {
+        if (!settingsMode) return
+        if (sourcePicker.visibility == View.VISIBLE) Motion.swap(sourcePicker, browseList)
+        if (readingPanel.visibility == View.VISIBLE) Motion.swap(readingPanel, browseList)
+        browseList.visibility = View.VISIBLE
+        browseMessage.visibility = View.GONE
+        browseAction.visibility = View.GONE
+        sourcePicker.visibility = View.GONE
+        btnSpotify.visibility = View.GONE
+        btnSearch.visibility = View.GONE
+        btnBrowseBack.isEnabled = true
+        btnBrowseBack.alpha = 1f
+        browseCrumb.visibility = View.GONE
+        browseTitle.text = browseTitle.context.getString(R.string.settings)
+        adapter.submit(
+            lines.map { line ->
+                BrowseAdapter.Row(
+                    title = line.title,
+                    subtitle = line.value,
+                    source = null,
+                    current = false,
+                    onTap = line.onTap,
+                )
+            }
+        )
+    }
+
+    /**
+     * The heart: -1 where there is nothing to mark. Only a song on this device can be a
+     * favourite — a list of ids is all this app keeps, and it has no ids for anybody
+     * else's catalogue.
+     */
+    fun setFavourite(state: Int) {
+        btnFavourite.visibility = if (state < 0) View.GONE else View.VISIBLE
+        if (state < 0) return
+        btnFavourite.imageTintList = tint(if (state > 0) R.color.accent else R.color.ink)
+        btnFavourite.alpha = if (state > 0) 1f else 0.45f
+    }
+
     fun setQueueMode(enabled: Boolean) {
         queueMode = enabled
         btnQueue.imageTintList = tint(if (enabled) R.color.accent else R.color.ink)
@@ -304,6 +463,19 @@ class ControlsBinder(root: View, private val actions: Actions) {
         btnBrowseBack.alpha = 1f
     }
 
+    /**
+     * [active] is the app already living on the small screen, [available] whether there
+     * is a second screen at all: alone on one display the button would do nothing, so it
+     * is not there to be pressed.
+     */
+    fun setGameMode(active: Boolean, available: Boolean) {
+        btnGameMode.visibility = if (available) View.VISIBLE else View.GONE
+        btnGameMode.imageTintList = tint(if (active) R.color.accent else R.color.ink)
+        btnGameMode.contentDescription = btnGameMode.context.getString(
+            if (active) R.string.game_mode_exit else R.string.game_mode
+        )
+    }
+
     /** Swaps the header's title for a query field and asks for the keyboard. */
     fun setSearchMode(enabled: Boolean) {
         searchMode = enabled
@@ -334,6 +506,12 @@ class ControlsBinder(root: View, private val actions: Actions) {
                 subtitle = item.subtitle,
                 source = item,
                 current = false,
+                // The one row in any library that this app made and can therefore unmake.
+                onLongTap = if (item.uri.startsWith(LocalLibrary.PLAYLIST_PREFIX)) {
+                    { actions.onDeletePlaylist(item) }
+                } else {
+                    null
+                },
                 // The position is what lets a track be played inside its list rather
                 // than on its own.
                 onTap = { actions.onBrowseItemTapped(item, position) },
@@ -423,7 +601,7 @@ class ControlsBinder(root: View, private val actions: Actions) {
         lastSpotifyStatus = spotify
         // Search and the queue borrow the same list; neither may be painted over by a
         // browse update arriving underneath them.
-        if (searchMode || queueMode) return
+        if (searchMode || queueMode || settingsMode) return
         val context = browseMessage.context
         val connected = spotify is SpotifyRemote.Status.Connected
 
@@ -550,6 +728,8 @@ class ControlsBinder(root: View, private val actions: Actions) {
             val source: ListItem?,
             val current: Boolean,
             val onTap: () -> Unit,
+            /** A row that can be held for something. Most cannot, and do nothing. */
+            val onLongTap: (() -> Unit)? = null,
         )
 
         private var items: List<Row> = emptyList()

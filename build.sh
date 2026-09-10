@@ -21,5 +21,9 @@ if command -v sha256sum >/dev/null 2>&1; then
     }
 fi
 
+# Name the Thor outright: a stale emulator entry in the device list is enough to
+# make a bare `adb install` refuse with "more than one device/emulator".
+serial="${ANDROID_SERIAL:-814f7a03}"
+
 JAVA_HOME="$HOME/jdk21" "$HOME/gradle-8.14.3/bin/gradle" --project-dir "$root" assembleDebug "$@"
-"$HOME/android-sdk/platform-tools/adb" install -r "$root/app/build/outputs/apk/debug/app-debug.apk"
+"$HOME/android-sdk/platform-tools/adb" -s "$serial" install -r "$root/app/build/outputs/apk/debug/app-debug.apk"

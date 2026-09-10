@@ -47,10 +47,20 @@ class LocalLibrary(private val context: Context) {
         const val ALBUMS_URI = "dualmusic:local:albums"
         const val ARTISTS_URI = "dualmusic:local:artists"
         const val TRACKS_URI = "dualmusic:local:tracks"
+        const val GENRES_URI = "dualmusic:local:genres"
+        const val FOLDERS_URI = "dualmusic:local:folders"
+        const val PLAYLISTS_URI = "dualmusic:local:playlists"
+        const val FAVOURITES_URI = "dualmusic:local:favourites"
+        const val RECENT_URI = "dualmusic:local:recent"
 
         const val ALBUM_PREFIX = "dualmusic:local:album:"
         const val ARTIST_PREFIX = "dualmusic:local:artist:"
         const val TRACK_PREFIX = "dualmusic:local:track:"
+        const val GENRE_PREFIX = "dualmusic:local:genre:"
+        const val PLAYLIST_PREFIX = "dualmusic:local:playlist:"
+
+        /** The one node whose id is not a number: a folder is addressed by its path. */
+        const val FOLDER_PREFIX = "dualmusic:local:folder:"
 
         /**
          * Cover art is addressed by the *track* id rather than by a `content://` URI,
@@ -197,6 +207,8 @@ class LocalLibrary(private val context: Context) {
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val resolver get() = context.contentResolver
+    private val tastes = LocalTastes(context)
+    private val playlists = LocalPlaylists(context)
 
     /** Whether there is a library to open at all, which is only ever the permission. */
     val isAvailable: Boolean get() = hasPermission(context)
@@ -256,15 +268,37 @@ class LocalLibrary(private val context: Context) {
         }
     }
 
+    /**
+     * The root of the local library. The three ways in that always exist come first as
+     * ways *out* of it — what you liked, what you played, what you kept — and each is
+     * there only when it holds something: a row promising favourites and opening on an
+     * empty list teaches nothing and costs a tap to find that out.
+     */
     private fun childrenBlocking(uri: String): List<ListItem> = when {
-        uri == ROOT_URI -> listOf(
-            node(ALBUMS_URI, R.string.local_albums, R.string.local_albums_hint),
-            node(ARTISTS_URI, R.string.local_artists, R.string.local_artists_hint),
-            node(TRACKS_URI, R.string.local_tracks, R.string.local_tracks_hint),
-        )
+        uri == ROOT_URI -> buildList {
+            if (tastes.favourites().isNotEmpty()) {
+                add(node(FAVOURITES_URI, R.string.local_favourites, R.string.local_favourites_hint))
+            }
+            if (tastes.recent().isNotEmpty()) {
+                add(node(RECENT_URI, R.string.local_recent, R.string.local_recent_hint))
+            }
+            if (playlists.all().isNotEmpty()) {
+                add(node(PLAYLISTS_URI, R.string.local_playlists, R.string.local_playlists_hint))
+            }
+            add(node(ALBUMS_URI, R.string.local_albums, R.string.local_albums_hint))
+            add(node(ARTISTS_URI, R.string.local_artists, R.string.local_artists_hint))
+            if (genres().isNotEmpty()) {
+                add(node(GENRES_URI, R.string.local_genres, R.string.local_genres_hint))
+            }
+            add(node(FOLDERS_URI, R.string.local_folders, R.string.local_folders_hint))
+            add(node(TRACKS_URI, R.string.local_tracks, R.string.local_tracks_hint))
+        }
 
         uri == ALBUMS_URI -> albums()
         uri == ARTISTS_URI -> artists()
+        uri == GENRES_URI -> genres()
+        uri == FOLDERS_URI -> folders()
+        uri == PLAYLISTS_URI -> playlistNodes()
         uri.startsWith(ARTIST_PREFIX) -> albumsOfArtist(uri.removePrefix(ARTIST_PREFIX).toLongOrNull())
         else -> tracksBlocking(uri).map { it.toListItem() }
     }
@@ -295,7 +329,54 @@ class LocalLibrary(private val context: Context) {
             null,
         )
 
+        // Three lists the library does not hold: two of ours and one the user wrote.
+        // All of them are ids, and ids are resolved against MediaStore on every read,
+        // so a file deleted since simply stops being in the list.
+        uri == FAVOURITES_URI -> tracksByIds(tastes.favourites().toLongArray())
+        uri == RECENT_URI -> tracksByIds(tastes.recent().toLongArray())
+        uri.startsWith(PLAYLIST_PREFIX) ->
+            playlists.byId(uri.removePrefix(PLAYLIST_PREFIX))
+                ?.let { tracksByIds(it.ids.toLongArray()) }
+                .orEmpty()
+
+        uri.startsWith(GENRE_PREFIX) -> genreTracks(uri.removePrefix(GENRE_PREFIX).toLongOrNull())
+        uri.startsWith(FOLDER_PREFIX) -> folderTracks(uri.removePrefix(FOLDER_PREFIX))
+
         else -> emptyList()
+    }
+
+    /**
+     * The songs filed under a genre.
+     *
+     * Two queries on purpose. The members table carries the media columns, but its own
+     * `_ID` is the *membership* row, not the track — reading it as a track id would
+     * hand the player numbers that point at nothing. So the members table is asked for
+     * `AUDIO_ID` alone and the tracks are fetched by id like any other list.
+     */
+    private fun genreTracks(genreId: Long?): List<Track> {
+        if (genreId == null) return emptyList()
+        val ids = mutableListOf<Long>()
+        resolver.query(
+            MediaStore.Audio.Genres.Members.getContentUri("external", genreId),
+            arrayOf(MediaStore.Audio.Genres.Members.AUDIO_ID),
+            null,
+            null,
+            "${MediaStore.Audio.Genres.Members.ARTIST} COLLATE NOCASE ASC, " +
+                "${MediaStore.Audio.Genres.Members.TRACK} ASC",
+        )?.use { cursor ->
+            while (cursor.moveToNext()) ids += cursor.getLong(0)
+        }
+        return tracksByIds(ids.toLongArray())
+    }
+
+    /** Everything sitting directly in one directory, and nothing from below it. */
+    private fun folderTracks(path: String): List<Track> {
+        if (path.isBlank()) return emptyList()
+        return query(
+            "${MediaStore.Audio.Media.DATA} LIKE ?",
+            arrayOf("$path/%"),
+            "${MediaStore.Audio.Media.TRACK} ASC, ${MediaStore.Audio.Media.TITLE} ASC",
+        ).filter { it.path?.substringBeforeLast('/') == path }
     }
 
     /**
@@ -351,12 +432,16 @@ class LocalLibrary(private val context: Context) {
         if (trackUri == null || !trackUri.startsWith(TRACK_PREFIX)) return null
         val path = tracksBlocking(trackUri).firstOrNull()?.path ?: return null
         val lrc = java.io.File(path.substringBeforeLast('.', path) + ".lrc")
-        return try {
+        val direct = try {
             if (lrc.canRead()) lrc.readText() else null
         } catch (e: Exception) {
             Log.d(TAG, "no readable .lrc beside $path", e)
             null
         }
+        if (!direct.isNullOrBlank()) return direct
+        // The supported way in: a folder the user handed the app through the document
+        // picker. Without one this is where the sibling .lrc quietly stops working.
+        return MusicFolder.lyricsFor(context, path.substringAfterLast('/'))
     }
 
     /**
@@ -518,6 +603,77 @@ class LocalLibrary(private val context: Context) {
             while (cursor.moveToNext()) covers.putIfAbsent(cursor.getLong(0), cursor.getLong(1))
         }
         return covers
+    }
+
+    /**
+     * The genres MediaStore knows about. It knows them from the files' own tags, so a
+     * library with no genre tags has no genres and the row into them is not offered.
+     */
+    private fun genres(): List<ListItem> {
+        val items = mutableListOf<ListItem>()
+        resolver.query(
+            MediaStore.Audio.Genres.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Audio.Genres._ID, MediaStore.Audio.Genres.NAME),
+            null,
+            null,
+            "${MediaStore.Audio.Genres.NAME} COLLATE NOCASE ASC",
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0)
+                val name = cursor.getString(1)?.takeIf { it.isNotBlank() } ?: continue
+                items += ListItem(
+                    /* id = */ "$GENRE_PREFIX$id",
+                    /* uri = */ "$GENRE_PREFIX$id",
+                    /* imageUri = */ null,
+                    /* title = */ name,
+                    /* subtitle = */ "",
+                    /* playable = */ false,
+                    /* hasChildren = */ true,
+                )
+            }
+        }
+        return items
+    }
+
+    /**
+     * The library as it is actually laid out on disk.
+     *
+     * This is the level that saves an untagged library: a folder of MP3s with no album
+     * tag browses as one "Unknown album" and as a hundred identical rows under All
+     * tracks, but the person who put them there knows exactly which folder they are in.
+     */
+    private fun folders(): List<ListItem> {
+        val tracks = query(null, null, "${MediaStore.Audio.Media.DATA} ASC")
+        return tracks
+            .mapNotNull { it.path?.substringBeforeLast('/', "")?.takeIf { path -> path.isNotBlank() } }
+            .groupingBy { it }
+            .eachCount()
+            .toList()
+            .sortedBy { (path, _) -> path.substringAfterLast('/').lowercase() }
+            .map { (path, count) ->
+                ListItem(
+                    /* id = */ "$FOLDER_PREFIX$path",
+                    /* uri = */ "$FOLDER_PREFIX$path",
+                    /* imageUri = */ null,
+                    /* title = */ path.substringAfterLast('/'),
+                    /* subtitle = */ context.getString(R.string.n_tracks, count),
+                    /* playable = */ false,
+                    /* hasChildren = */ true,
+                )
+            }
+    }
+
+    /** The playlists the app keeps; their rows carry the count, since nothing else can. */
+    private fun playlistNodes(): List<ListItem> = playlists.all().map { playlist ->
+        ListItem(
+            /* id = */ "$PLAYLIST_PREFIX${playlist.id}",
+            /* uri = */ "$PLAYLIST_PREFIX${playlist.id}",
+            /* imageUri = */ null,
+            /* title = */ playlist.name,
+            /* subtitle = */ context.getString(R.string.n_tracks, playlist.ids.size),
+            /* playable = */ false,
+            /* hasChildren = */ true,
+        )
     }
 
     private fun artists(): List<ListItem> {

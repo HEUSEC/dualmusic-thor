@@ -16,6 +16,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- The equaliser is an AudioEffect, and an effect on an audio session is an audio
+         setting. Normal permission, granted at install; refused it, the setting is
+         simply not offered. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_media_play"

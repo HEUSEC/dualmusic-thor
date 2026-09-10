@@ -66,6 +66,35 @@ third song of an album starts a queue of that album at index two and publishes i
 `setQueue`, so "up next" is the rest of the record rather than whatever a remote player
 decided to autoplay.
 
+The tree over those files is MediaStore's where MediaStore has an answer — albums,
+artists, genres — and the app's where it does not:
+
+- **Folders** are read off `DATA`, grouped by parent directory. This is the level that
+  saves an untagged library: a hundred files with no album tag are one "Unknown album"
+  and a hundred identical rows under All tracks, but whoever put them there knows exactly
+  which folder they are in.
+- **Genres** come from `MediaStore.Audio.Genres`, whose members table is asked for
+  `AUDIO_ID` and nothing else — its own `_ID` is the *membership* row, and reading that
+  as a track id hands the player numbers pointing at nothing. A library with no genre
+  tags has no genres, and then the row into them is not offered at all.
+- **Playlists** are the app's own, in `filesDir` as JSON. Not
+  `MediaStore.Audio.Playlists`: that table was deprecated in Android 11 and writing to it
+  from an ordinary app went with it, and the `.m3u` files it indexed are exactly what
+  `READ_MEDIA_AUDIO` does not grant. They are made by *holding the queue button* — what
+  is playing becomes a playlist named after itself — because the panel that would take a
+  typed name has no keyboard in front of it. Holding a playlist row deletes it.
+- **Favourites** and **Recently played** are two id lists in preferences, the first
+  written by the heart in the transport row and the second by the player as it starts
+  each track. `MediaStore.Audio.Media.IS_FAVORITE` exists and is not usable here: writing
+  it needs either ownership of the file or a `createFavoriteRequest` consent dialog per
+  track, which is a system prompt in the middle of a thumb-driven panel.
+
+All four of the app's own levels are only ever *ids*. MediaStore owns the songs and may
+be re-scanned at any moment, so a deleted file simply stops appearing in them, which is
+the correct behaviour and costs no bookkeeping at all. Each row into them appears only
+when it holds something: a Favourites row that opens on an empty list teaches nothing and
+costs a tap to find that out.
+
 Covers come from `ContentResolver.loadThumbnail`, with the file's own embedded picture
 read by `MediaMetadataRetriever` behind it — that is the case the index cannot cover, a
 file dropped in since the last scan. `ArtworkLoader` is still the one place that knows
@@ -80,10 +109,15 @@ file called `duvet-boa.mp3` asks LRCLIB about *Duvet* by *bôa* rather than abou
 
 Three sources are tried in order, and the order is about trust:
 
-1. **A `.lrc` beside the file.** The user put it there, so it wins. Best effort, though:
-   `READ_MEDIA_AUDIO` grants direct access to audio files and nothing else, so a sibling
-   `.lrc` is readable only where the app has wider storage access than that. A refusal is
-   not an error.
+1. **A `.lrc` beside the file.** The user put it there, so it wins. `READ_MEDIA_AUDIO`
+   grants direct access to audio files and *nothing else in the folder they are in*, so
+   the direct read of a sibling `.lrc` fails on this device however plainly the file is
+   sitting there. The supported way in is the document picker: **Settings → Music folder
+   for .lrc** takes one `ACTION_OPEN_DOCUMENT_TREE` grant, persists it, and the tree
+   becomes readable without the app ever holding storage-wide access. The folder is
+   indexed once per run, by file name — `.lrc` files only — because a lyrics lookup must
+   not walk a music folder. Granting a folder also throws the whole lyrics cache away:
+   every miss cached for the week before it was an answer to a different question.
 2. **The file's own ID3 tag.** This one needs no permission the app does not already
    hold — the audio file itself is what `READ_MEDIA_AUDIO` grants — and it travelled with
    the recording, so it is about *this* recording rather than about a track that shares
@@ -349,6 +383,25 @@ stored in SharedPreferences. Default: controls on the small panel, now playing o
 Touch does reach a Presentation on display 4 — verified by tapping its swap button and
 watching the panels exchange.
 
+### Game mode — giving the big screen away
+
+The controller button in the header moves the *whole app* onto display 4 and leaves
+display 0 to the Thor's launcher, so a game can be started there while the music stays
+under your thumb. It is an ordinary activity move — `ActivityOptions.setLaunchDisplayId()`
+on our own launcher intent — which reparents the task rather than restarting it: the
+window arrives on the other panel through `onConfigurationChanged`, and playback, which
+lives in `LocalPlaybackService` or in another app entirely, never notices.
+
+Display 4 accepts activities as well as presentations, checked with
+`dumpsys activity activities` after `am start --display 4`; the OEM shell
+(`rip.moth.cocoonshell/.ExternalDisplayActivity`) is what normally sits there, and it
+comes back when the app leaves. Both displays keep a resumed activity of their own, so
+the game on 0 and the panel on 4 run at the same time.
+
+Down there the app is one window, and it is the *control* panel that fills it — the one
+drawn for that screen at that size. Pressing the button again, lit while the app is on
+the small screen, brings the two-panel layout back to display 0.
+
 ## Permissions
 
 `MediaSessionManager.getActiveSessions()` requires an *enabled notification listener* as
@@ -409,18 +462,21 @@ adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
   pixels the hue that survived the desaturation is noise, not a decision. The change
   runs over 600 ms, four times slower than a content swap, because it is a change of
   light rather than of content and at content speed it reads as a flash.
-- **The far panel rests, and drifts while it does.** Both windows hold
+- **Both panels rest; only the far one drifts.** Both windows hold
   `FLAG_KEEP_SCREEN_ON`, which is right while music plays and is exactly the problem
   when it stops: two panels of a handheld left lit on a paused song for as long as it
   takes somebody to come back. Three minutes after the music stops — longer than any gap
-  between tracks, shorter than a coffee — the now-playing panel dims: the ground falls to
+  between tracks, shorter than a coffee — both panels dim: the ground falls to
   30% of its value at a little over half its saturation, and the shell fades with it,
   because dimming the shell alone would have laid a pale card over a bright ground,
   which is less contrast rather than less light. Nothing is hidden; a panel at rest has
-  not forgotten the song. Every minute it drifts 6dp diagonally over three seconds, so
-  no edge sits on one line of pixels for hours. A touch on either panel, any key, or the
-  music starting again ends it. **The control panel never rests** — it is the one you
-  touch, and dimming what somebody is reaching for helps nobody.
+  not forgotten the song. The far panel also drifts 6dp diagonally every minute, over
+  three seconds, so no edge sits on one line of pixels for hours; the control panel does
+  not, because that would be motion under a hand about to touch it, and a touch there is
+  a wake in any case. A touch on either panel, any key, or the music starting again ends
+  it. The control panel used to stay at full brightness beside a resting one, which was
+  right while the device is in somebody's hands and wrong while it is face up on a desk;
+  since it wakes on the first touch, resting it costs nothing in either case.
 
 - **Queue, volume and the gamepad are the session API's, not Spotify's.** The queue
   button appears only when the player publishes one (`MediaController.getQueue()`), and
@@ -474,6 +530,49 @@ adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
   and its raw LRC, so the same song costs LRCLIB nothing twice. Misses are cached too,
   but expire after a week: a song missing today may be added next month.
 
+- **The join between two tracks is the framework's, not a gap of ours.** One
+  `MediaPlayer` cannot play a record without seams: opening a file takes long enough to
+  hear. So the next track is opened and prepared *while the current one plays* and handed
+  over with `setNextMediaPlayer`, and the framework starts it the instant the current one
+  ends — what is left for us is a promotion, not a start: move the cursor, say what is
+  playing, open the one after it. Every player is built in one place and given the same
+  generated audio session, which is what lets the equaliser survive the join; a session
+  taken from each player would drop the effect at every track. Only ever *one* track
+  ahead, and never under repeat-one, where replaying the same file needs no second
+  player. Anything that changes what comes next — a skip, shuffle, repeat — releases the
+  armed player, because it was opened on an answer that is no longer true.
+- **Crossfade is not here, and the reason is the API.** An overlap and
+  `setNextMediaPlayer` are mutually exclusive: the framework's gapless hand-off starts
+  the next player at the end of this one, and a crossfade needs both audible at once with
+  their volumes ramped. That is a second playback engine, not a setting. Gapless is the
+  right default for a library of records; crossfade is a taste, and it can have its own
+  engine the day somebody wants it.
+- **The equaliser is the device's presets and nothing invented.** `Equalizer` is asked
+  what it offers — on a session generated for the purpose, so nothing is attached to
+  anybody else's audio to find out — and the settings row cycles through those names. A
+  device with no presets has no row. Off is the default and the honest one: a preset is a
+  colouring of somebody else's mix, and nobody should find one applied that they did not
+  ask for. It reaches only *our* playback: an effect lives on our audio session, and
+  Spotify's audio is not ours to colour.
+- **The record is still on the turntable when you come back.** `LocalPlaybackService`
+  writes its queue ids, its place in them and its position into `PlaybackMemory` on every
+  state change and on a 15-second tick besides, so a process killed mid-song costs
+  seconds rather than the whole track. On the first snapshot of a run that finds *nothing*
+  playing anywhere, the activity asks the service to stand that record back up — loaded,
+  seeked, and **paused**. Opening the app is not asking for music; it is asking to be
+  where you were, with play one press away. Never over a session that already exists:
+  coming back while Spotify plays, or while a foreign player sits paused, leaves what is
+  on the panel alone, and the ask happens once per run, so a queue that ends does not
+  summon the last one back.
+- **The sleep clock is a request for silence, not a toggle.** The clock in the header
+  climbs 15 / 30 / 45 / 60 / 90 minutes and then off, and the dock shows what is left of
+  it. When it expires, `MediaHub.pauseAll()` pauses *everything* that is playing — on a
+  handheld the thing making noise may not be ours, and stopping only the session in front
+  is not sleep. The deadline is written to preferences rather than living only in a
+  posted callback, so moving the app between panels, or a rebuild, does not cost the
+  timer; one that ran out while the app was gone is dropped rather than fired late. It
+  does die with the process, which is the honest limit of a timer owned by the activity —
+  the activity is the half of the app that can reach another player's session.
 - **Position is interpolated, never polled.** `PlaybackState` gives a position at an
   instant plus a speed; `MediaHub.Track.positionNowMs()` extrapolates and a 250 ms
   ticker repaints only the progress row.
@@ -487,6 +586,16 @@ adb shell pm grant com.dualmusic.thor android.permission.READ_MEDIA_AUDIO
   nothing is far likelier to be lazy than genuinely uncontrollable.
 - **Single-screen fallback:** with no presentation-capable display, both panels stack in
   the Activity. Same path if `show()` fails or the panel is unplugged.
+- **The settings are rows in the browse list, not a screen.** Every row in this app is a
+  title, a value on the right and a tap — so the six things somebody can change are drawn
+  through the same adapter, in the same list, reachable from either panel and from the
+  gamepad, and back walks out of them like it walks out of everything else. No dialogs,
+  no switches, no sliders: each row cycles to its next value. They are *panels rest
+  after*, *lyric size*, *open on*, *gapless*, *equaliser* and *music folder for .lrc* —
+  every one of them a constant that turned out to depend on the room, the library or the
+  ear it was being used with. A separate settings Activity would also have been wrong on
+  this hardware: it would open on the display the Activity is on, which is not
+  necessarily the panel the button was pressed on.
 
 ## Verified on the device
 
@@ -551,14 +660,18 @@ And end to end with Spotify:
    the gamepad driving it. With the radio off the app cold-starts on the source picker
    and the device's library browses (Albums, Artists, All tracks); the playback half of
    that sentence has not been walked through end to end on the device.
-2. The `.lrc` beside the file is still best effort, and on this device it is not working
-   at all: `READ_MEDIA_AUDIO` grants the audio files and nothing else, so a sibling
-   `.lrc` under `/sdcard/Music` is unreadable and the file's own `SYLT`/`USLT` tag is
-   doing all of the offline work. Either the app asks for wider storage access at the
-   moment somebody puts one there, or it says so where they can see it.
-3. Ambient belongs to the now-playing panel alone. A control panel at full brightness
-   beside a resting one is right while the device is in someone's hands and wrong while
-   it is face up on a desk, and the app cannot currently tell those apart.
+2. The document-picker grant that makes a sibling `.lrc` readable is offered in the
+   settings and nowhere else. Somebody who has never opened that list will not know the
+   app is one tap from reading the lyrics file they put next to the song; the honest
+   place to say so is where the words are missing.
+3. Volume normalisation is not there. ReplayGain lives in tags almost no library
+   carries (`TXXX:replaygain_track_gain`), and the alternative — measuring loudness
+   ourselves, or leaning on `LoudnessEnhancer` — is a different feature with a different
+   risk: quietly changing how somebody's music sounds. The tag path is the honest one to
+   build first, since it only applies a number the file itself states.
+4. The sleep timer dies with the process. If the app is killed while the service plays
+   on, nothing is left holding the deadline. An alarm would survive it, at the cost of
+   waking the app for the sole purpose of pausing something.
 
 ## Building a release
 

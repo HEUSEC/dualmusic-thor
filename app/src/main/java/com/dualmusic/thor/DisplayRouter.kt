@@ -27,6 +27,12 @@ object DisplayRouter {
         val presentationDisplayId: Int?,
         /** true: touch controls on the presentation panel, now playing on the Activity. */
         val controlsOnPresentation: Boolean,
+        /**
+         * The display the Activity itself sits on. Normally the default one, but game
+         * mode moves the whole app onto the small panel and leaves the big one to a
+         * game, and then this is what says so.
+         */
+        val hostDisplayId: Int = Display.DEFAULT_DISPLAY,
     ) {
         val isSingleScreen: Boolean get() = presentationDisplayId == null
     }
@@ -47,6 +53,7 @@ object DisplayRouter {
             presentationDisplayId = far?.displayId,
             // Default: you touch the small panel, you look at the big one.
             controlsOnPresentation = !isSwapped(context),
+            hostDisplayId = activityDisplayId,
         )
     }
 

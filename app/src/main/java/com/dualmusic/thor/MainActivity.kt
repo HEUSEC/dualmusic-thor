@@ -2,15 +2,20 @@ package com.dualmusic.thor
 
 import android.Manifest
 import android.app.Activity
+import android.app.ActivityOptions
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
+import android.media.audiofx.Equalizer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import android.view.Display
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -42,16 +47,14 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         private const val NUDGE_MS = 10_000L
 
         private const val REQUEST_LOCAL_MEDIA = 41
+        private const val REQUEST_MUSIC_FOLDER = 42
 
         /**
-         * How long nothing has to happen before the far panel rests.
-         *
-         * Both windows hold FLAG_KEEP_SCREEN_ON, which is right while music is playing
-         * and is exactly the problem when it stops: two panels of a handheld left lit
-         * on a paused song, for as long as it takes somebody to come back. Three
-         * minutes is longer than any gap between tracks and shorter than a coffee.
+         * How long to give a display move before looking at where we actually landed.
+         * A refused move is silent, so something has to go and check.
          */
-        private const val AMBIENT_AFTER_MS = 3 * 60 * 1000L
+        private const val MOVE_SETTLE_MS = 500L
+
     }
 
     private lateinit var hub: MediaHub
@@ -73,6 +76,18 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         LocalMetadata(java.io.File(cacheDir, "releases"), localLibrary)
     }
     private val audio by lazy { getSystemService(AudioManager::class.java) }
+    private val settings by lazy { Preferences(this) }
+    // The application context on purpose: these outlive the activity, and the service
+    // writes to the same two lists from its own side.
+    private val tastes by lazy { LocalTastes(applicationContext) }
+    private val playlists by lazy { LocalPlaylists(applicationContext) }
+
+    /**
+     * The equaliser presets this device offers, asked for once. A device with none — or
+     * one that refuses the effect — simply has no equaliser row in the settings.
+     */
+    private val eqPresets by lazy { equalizerPresets() }
+    private var settingsMode = false
     private var searchMode = false
     private var searchResults: List<ListItem> = emptyList()
     private var queueMode = false
@@ -87,6 +102,11 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private var lyricsMode = false
 
     private var plan = DisplayRouter.Plan(null, controlsOnPresentation = true)
+
+    /** The app is the guest on the small panel, with the big one given over to a game. */
+    private val inGameMode: Boolean
+        get() = plan.hostDisplayId != Display.DEFAULT_DISPLAY
+
     private var appliedPlan: DisplayRouter.Plan? = null
     private var presentation: PanelPresentation? = null
     private var nowPlayingBinder: NowPlayingBinder? = null
@@ -101,13 +121,18 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     private var ambient = false
     private var wasPlaying = false
+
+    /** Asked once per run of the app, and only when there is nothing else to look at. */
+    private var restoreTried = false
     private val enterAmbient = Runnable { setAmbient(true) }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val sleep by lazy { SleepTimer(this, handler) }
     private val ticker = object : Runnable {
         override fun run() {
             nowPlayingBinder?.updateProgress()
             controlsBinder?.updateProgress()
+            controlsBinder?.setSleep(sleep.remainingMs)
             handler.postDelayed(this, TICK_MS)
         }
     }
@@ -137,14 +162,33 @@ class MainActivity : Activity(), ControlsBinder.Actions {
             authoriseTitle = getString(R.string.connect_library),
             authoriseSubtitle = getString(R.string.connect_library_hint),
         )
+        sleep.onExpired = { onSleepExpired() }
         browser.onAuthoriseRequested = { SpotifyWebAuth.authorize(this) }
         browser.onLocalPermissionRequested = { requestLocalMediaAccess() }
-        // The panel opens on the choice of source, not inside somebody's library.
-        browser.loadRoot()
+        openBrowse()
+    }
+
+    /**
+     * Where the browse panel opens. The picker is the default and the safe one — it
+     * assumes nothing about which library somebody wants today — but a device used as a
+     * player of its own files should not be asked that question every time. A library
+     * that cannot be opened (Spotify not linked, the files not permitted) falls back to
+     * the picker rather than opening on an error.
+     */
+    private fun openBrowse() {
+        when {
+            settings.openOn == Preferences.OPEN_LOCAL && LocalLibrary.hasPermission(this) ->
+                browser.choose(LibraryBrowser.Source.LOCAL)
+
+            settings.openOn == Preferences.OPEN_SPOTIFY -> browser.choose(LibraryBrowser.Source.SPOTIFY)
+            else -> browser.loadRoot()
+        }
     }
 
     override fun onStart() {
         super.onStart()
+        // A timer set before the app was last closed is still owed to whoever set it.
+        sleep.restore()
         displayManager.registerDisplayListener(displayListener, handler)
         appliedPlan = null // the presentation was torn down in onStop; rebuild it
         applyPlan()
@@ -180,6 +224,16 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     override fun onDestroy() {
         super.onDestroy()
         tintExecutor.shutdownNow()
+    }
+
+    /**
+     * Moving between the Thor's panels is a configuration change, and this activity
+     * declares that it handles its own: the window simply arrives on the other display,
+     * and the panels have to be rebuilt around it.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyPlan()
     }
 
     /**
@@ -257,6 +311,10 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_MUSIC_FOLDER) {
+            data?.data?.takeIf { resultCode == RESULT_OK }?.let { onMusicFolderChosen(it) }
+            return
+        }
         if (requestCode != SpotifyNativeAuth.REQUEST_CODE) return
         val result = SpotifyNativeAuth.parseResult(resultCode, data)
         Log.i(TAG, "Spotify consent: $result")
@@ -281,6 +339,10 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         if (closeSearch()) return true
         if (queueMode) {
             setQueueMode(false)
+            return true
+        }
+        if (settingsMode) {
+            setSettingsMode(false)
             return true
         }
         if (lyricsMode) {
@@ -368,10 +430,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
         val far = plan.presentationDisplayId?.let { DisplayRouter.displayById(this, it) }
         if (far == null) {
-            // Single screen: stack both panels in this window.
-            nowPlayingBinder =
-                NowPlayingBinder(addToHost(R.layout.now_playing, weight = 1f)) { hub.seekTo(it) }
-            controlsBinder = makeControls(addToHost(R.layout.controls, weight = 1f))
+            fillOneScreen()
         } else {
             val activityLayout =
                 if (plan.controlsOnPresentation) R.layout.now_playing else R.layout.controls
@@ -387,10 +446,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
                 controlsBinder = null
                 nowPlayingBinder = null
                 hostContainer.removeAllViews()
-                nowPlayingBinder =
-                NowPlayingBinder(addToHost(R.layout.now_playing, weight = 1f)) { hub.seekTo(it) }
-                controlsBinder = makeControls(addToHost(R.layout.controls, weight = 1f))
                 plan = plan.copy(presentationDisplayId = null)
+                fillOneScreen()
             }
         }
 
@@ -398,6 +455,22 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         lastSnapshot?.let { render(it) }
         renderBrowse()
         pushGround()
+        pushGameMode()
+    }
+
+    /**
+     * Everything in the one window. Two ways to get here: no second display at all,
+     * where the two panels stack and share it; and game mode, where the app is alone on
+     * the small screen and the control panel — the one drawn for that screen, at that
+     * size — is the whole app.
+     */
+    private fun fillOneScreen() {
+        if (!inGameMode) {
+            nowPlayingBinder =
+                NowPlayingBinder(addToHost(R.layout.now_playing, weight = 1f)) { hub.seekTo(it) }
+                    .also { it.setLyricScale(settings.lyricScale) }
+        }
+        controlsBinder = makeControls(addToHost(R.layout.controls, weight = 1f))
     }
 
     private fun showPresentation(display: android.view.Display, layoutRes: Int): Boolean = try {
@@ -420,6 +493,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private fun makeControls(view: View) = ControlsBinder(view, this).also {
         it.setReadingMode(lyricsMode)
         it.setQueueMode(queueMode)
+        it.setSettingsMode(settingsMode)
+        if (settingsMode) it.showSettings(settingsLines())
     }
 
     private fun bindPanel(layoutRes: Int, view: View) {
@@ -427,6 +502,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
             controlsBinder = makeControls(view)
         } else {
             nowPlayingBinder = NowPlayingBinder(view) { hub.seekTo(it) }.also {
+                it.setLyricScale(settings.lyricScale)
                 it.setLyrics(lyrics)
                 it.setReadingMode(lyricsMode)
             }
@@ -434,6 +510,7 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         lastSnapshot?.let { render(it) }
         renderBrowse()
         pushGround()
+        pushGameMode()
     }
 
     private fun addToHost(layoutRes: Int, weight: Float): View {
@@ -455,6 +532,8 @@ class MainActivity : Activity(), ControlsBinder.Actions {
 
     private fun render(snapshot: MediaHub.Snapshot) {
         lastSnapshot = snapshot
+        maybeRestoreLast(snapshot)
+        pushFavourite(snapshot)
         nowPlayingBinder?.bind(snapshot)
         controlsBinder?.bind(snapshot)
         requestLyrics(snapshot.track)
@@ -467,6 +546,24 @@ class MainActivity : Activity(), ControlsBinder.Actions {
             wasPlaying = playing
             wake()
         }
+    }
+
+    /**
+     * Nothing is playing anywhere and our own player left a record on the turntable:
+     * stand it back up, paused where it stopped, so the panel opens on the song you were
+     * listening to rather than on nothing.
+     *
+     * Guarded three ways. Once per run, so a track that ends does not summon the last
+     * one back. Only when the panel would otherwise be empty — coming back to the app
+     * while Spotify plays must not put our session in front of it, and a paused foreign
+     * session is still what the user was looking at. And only with permission to read
+     * the files, since without it there is nothing to restore from.
+     */
+    private fun maybeRestoreLast(snapshot: MediaHub.Snapshot) {
+        if (restoreTried || !snapshot.permissionGranted || snapshot.track != null) return
+        restoreTried = true
+        if (!LocalLibrary.hasPermission(this)) return
+        LocalPlaybackService.restore(this)
     }
 
     // --- the record's colour, and resting -------------------------------------
@@ -506,12 +603,29 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         nowPlayingBinder?.setGround(groundColor)
         controlsBinder?.setGround(groundColor)
         nowPlayingBinder?.setAmbient(ambient)
+        controlsBinder?.setAmbient(ambient)
     }
 
+    /**
+     * Both panels rest, not just the far one. A control panel at full brightness beside
+     * a resting one was the tell that the app had only half a notion of being left
+     * alone; the panels are lit by the same three-minute clock and go out together.
+     */
     private fun setAmbient(enabled: Boolean) {
         if (ambient == enabled) return
         ambient = enabled
         nowPlayingBinder?.setAmbient(enabled)
+        controlsBinder?.setAmbient(enabled)
+    }
+
+    /**
+     * The clock ran out. Everything playing stops — the timer is a request for silence,
+     * not for a toggle, and on a handheld the thing playing may not be ours. The panels
+     * are left to their own three minutes: music stopping is when that clock starts.
+     */
+    private fun onSleepExpired() {
+        hub.pauseAll()
+        controlsBinder?.setSleep(0L)
     }
 
     /**
@@ -522,8 +636,9 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     private fun wake() {
         handler.removeCallbacks(enterAmbient)
         setAmbient(false)
-        if (lastSnapshot?.track?.isPlaying != true) {
-            handler.postDelayed(enterAmbient, AMBIENT_AFTER_MS)
+        val after = settings.restAfterMs
+        if (after > 0L && lastSnapshot?.track?.isPlaying != true) {
+            handler.postDelayed(enterAmbient, after)
         }
     }
 
@@ -553,6 +668,34 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         controlsBinder?.bindBrowse(browseState, spotifyStatus)
     }
 
+    /**
+     * The heart, for the one kind of track this app can keep a list of. Everything else
+     * playing on the device gets no heart rather than a heart that does nothing.
+     */
+    private fun pushFavourite(snapshot: MediaHub.Snapshot) {
+        val id = localTrackId(snapshot.track?.mediaId)
+        controlsBinder?.setFavourite(
+            when {
+                id == null -> -1
+                tastes.isFavourite(id) -> 1
+                else -> 0
+            }
+        )
+    }
+
+    private fun localTrackId(mediaId: String?): Long? = mediaId
+        ?.takeIf { it.startsWith(LocalLibrary.TRACK_PREFIX) }
+        ?.removePrefix(LocalLibrary.TRACK_PREFIX)
+        ?.toLongOrNull()
+
+    /** Nowhere to go, and nowhere to come back from, means no button at all. */
+    private fun pushGameMode() {
+        controlsBinder?.setGameMode(
+            active = inGameMode,
+            available = inGameMode || plan.presentationDisplayId != null,
+        )
+    }
+
     // --- ControlsBinder.Actions ----------------------------------------------
 
     override fun onPrevious() = hub.skipPrevious()
@@ -564,6 +707,18 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     override fun onSeekTo(positionMs: Long) = hub.seekTo(positionMs)
 
     override fun onToggleQueue() = setQueueMode(!queueMode)
+
+    /** Each press is the next rung up the clock, and the last one turns it off. */
+    override fun onSleepTimer() {
+        val minutes = sleep.cycle()
+        controlsBinder?.setSleep(sleep.remainingMs)
+        val message = if (minutes > 0) {
+            getString(R.string.sleep_in, minutes)
+        } else {
+            getString(R.string.sleep_off)
+        }
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
 
     override fun onToggleShuffle() {
         hub.setShuffle(lastSnapshot?.modes?.shuffle != true)
@@ -602,6 +757,45 @@ class MainActivity : Activity(), ControlsBinder.Actions {
         lastSnapshot?.volume?.takeIf { it.remote && it.adjustable }
 
     override fun onSelectSession(session: MediaHub.SessionRef) = hub.selectSession(session.token)
+
+    /**
+     * The controller button: the app steps off the big screen and takes the small one,
+     * so the screen a game wants is free and the music stays under your thumb. Pressed
+     * again — it stays lit while the app is down there — it comes back to both panels.
+     */
+    override fun onGameMode() {
+        val target = if (inGameMode) Display.DEFAULT_DISPLAY else plan.presentationDisplayId
+        if (target == null) {
+            // One screen and nowhere to step aside to: say so rather than do nothing.
+            Toast.makeText(this, R.string.game_mode_alone, Toast.LENGTH_SHORT).show()
+            return
+        }
+        moveTo(target)
+    }
+
+    /**
+     * Moves this activity, and the task it roots, to another display.
+     *
+     * Nothing is torn down: the task is reparented, the window comes up on the other
+     * panel, and the music — which plays in our own service, or in another app
+     * altogether — never learns that any of this happened. The display we leave falls
+     * back to whatever was under us, which on the Thor is the launcher, and that is
+     * where the next thing gets started.
+     */
+    private fun moveTo(displayId: Int) {
+        // The presentation is on the display we may be about to occupy, and would be
+        // left drawing over the window arriving there.
+        dismissPresentation()
+        val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            options.toBundle(),
+        )
+        // The move arrives as the configuration change handled above — but a system
+        // that refuses it says nothing at all, so something has to go and look.
+        handler.postDelayed({ appliedPlan = null; applyPlan() }, MOVE_SETTLE_MS)
+    }
 
     /** No button any more; the gamepad's Y is what swaps the panels. */
     private fun onSwapScreens() {
@@ -670,6 +864,205 @@ class MainActivity : Activity(), ControlsBinder.Actions {
     }
 
     override fun onSourceChosen(source: LibraryBrowser.Source) = browser.choose(source)
+
+    override fun onToggleFavourite() {
+        val id = localTrackId(lastSnapshot?.track?.mediaId) ?: return
+        val liked = tastes.toggleFavourite(id)
+        controlsBinder?.setFavourite(if (liked) 1 else 0)
+        Toast.makeText(
+            this,
+            if (liked) R.string.favourite_added else R.string.favourite_removed,
+            Toast.LENGTH_SHORT,
+        ).show()
+        // The row into the favourites appears with the first one and goes with the last.
+        browser.reload(LibraryBrowser.Source.LOCAL)
+    }
+
+    /**
+     * The queue, kept.
+     *
+     * The full queue comes from what the player wrote down rather than from the
+     * snapshot: the hub caps what it publishes at something a person can scroll, and a
+     * playlist should be the whole record and not its first sixty songs. Only our own
+     * player has one — a Spotify queue is a list of URIs this app cannot re-play from
+     * ids, and saying so is better than saving something that will not work.
+     */
+    override fun onSaveQueue() {
+        val ids = PlaybackMemory.load(this)?.ids.orEmpty()
+        val playingLocal = localTrackId(lastSnapshot?.track?.mediaId) != null
+        if (!playingLocal || ids.isEmpty()) {
+            Toast.makeText(this, R.string.queue_not_local, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val name = lastSnapshot?.queueTitle?.takeIf { it.isNotBlank() }
+            ?: lastSnapshot?.track?.album?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.playlist_default)
+        val saved = playlists.save(name, ids) ?: return
+        Toast.makeText(this, getString(R.string.queue_saved, saved.name), Toast.LENGTH_SHORT).show()
+        browser.reload(LibraryBrowser.Source.LOCAL)
+    }
+
+    override fun onDeletePlaylist(item: ListItem) {
+        if (!item.uri.startsWith(LocalLibrary.PLAYLIST_PREFIX)) return
+        playlists.delete(item.uri.removePrefix(LocalLibrary.PLAYLIST_PREFIX))
+        Toast.makeText(this, R.string.playlist_deleted, Toast.LENGTH_SHORT).show()
+        browser.reload(LibraryBrowser.Source.LOCAL)
+    }
+
+    // --- settings -------------------------------------------------------------
+
+    override fun onOpenSettings() = setSettingsMode(!settingsMode)
+
+    private fun setSettingsMode(enabled: Boolean) {
+        if (enabled) {
+            closeSearch()
+            if (queueMode) setQueueMode(false)
+            if (lyricsMode) setLyricsMode(false)
+        }
+        settingsMode = enabled
+        controlsBinder?.setSettingsMode(enabled)
+        if (enabled) showSettings()
+    }
+
+    private fun showSettings() {
+        if (settingsMode) controlsBinder?.showSettings(settingsLines())
+    }
+
+    /**
+     * Everything this app lets somebody change, as rows that cycle. No switches, no
+     * dialogs, no sliders: a value on the right of a row and a tap that moves it to the
+     * next one is the only control on a panel driven by a thumb that also has to work
+     * from a gamepad.
+     */
+    private fun settingsLines(): List<ControlsBinder.Line> = buildList {
+        add(
+            ControlsBinder.Line(getString(R.string.set_rest), restLabel()) {
+                val steps = Preferences.REST_STEPS
+                val at = steps.indexOf(settings.restAfterMin).coerceAtLeast(0)
+                settings.restAfterMin = steps[(at + 1) % steps.size]
+                wake()
+                showSettings()
+            }
+        )
+        add(
+            ControlsBinder.Line(getString(R.string.set_lyric_size), lyricSizeLabel()) {
+                settings.lyricSize = (settings.lyricSize + 1) % Preferences.LYRIC_SCALES.size
+                nowPlayingBinder?.setLyricScale(settings.lyricScale)
+                showSettings()
+            }
+        )
+        add(
+            ControlsBinder.Line(getString(R.string.set_open_on), openOnLabel()) {
+                settings.openOn = (settings.openOn + 1) % 3
+                showSettings()
+            }
+        )
+        add(
+            ControlsBinder.Line(
+                getString(R.string.set_gapless),
+                getString(if (settings.gapless) R.string.on else R.string.off),
+            ) {
+                settings.gapless = !settings.gapless
+                LocalPlaybackService.settingsChanged(this@MainActivity)
+                showSettings()
+            }
+        )
+        if (eqPresets.isNotEmpty()) {
+            add(
+                ControlsBinder.Line(getString(R.string.set_equalizer), eqLabel()) {
+                    val next = settings.eqPreset + 1
+                    settings.eqPreset =
+                        if (next >= eqPresets.size) Preferences.EQ_OFF else next
+                    LocalPlaybackService.settingsChanged(this@MainActivity)
+                    showSettings()
+                }
+            )
+        }
+        add(
+            ControlsBinder.Line(getString(R.string.set_music_folder), folderLabel()) {
+                pickMusicFolder()
+            }
+        )
+    }
+
+    private fun restLabel(): String = settings.restAfterMin.let {
+        if (it <= 0) getString(R.string.set_rest_never) else getString(R.string.n_minutes, it)
+    }
+
+    private fun lyricSizeLabel(): String = getString(
+        when (settings.lyricSize) {
+            0 -> R.string.size_small
+            2 -> R.string.size_large
+            else -> R.string.size_medium
+        }
+    )
+
+    private fun openOnLabel(): String = getString(
+        when (settings.openOn) {
+            Preferences.OPEN_LOCAL -> R.string.open_local
+            Preferences.OPEN_SPOTIFY -> R.string.open_spotify
+            else -> R.string.open_picker
+        }
+    )
+
+    private fun eqLabel(): String =
+        eqPresets.getOrNull(settings.eqPreset) ?: getString(R.string.off)
+
+    private fun folderLabel(): String = settings.musicFolder
+        ?.let { Uri.parse(it).lastPathSegment?.substringAfterLast('/') }
+        ?: getString(R.string.folder_none)
+
+    /**
+     * The preset names this device offers. Asked of a session generated for the purpose
+     * rather than of the global mix: the answer is the same and nothing is attached to
+     * anybody else's audio to get it.
+     */
+    private fun equalizerPresets(): List<String> = try {
+        val effect = Equalizer(0, audio.generateAudioSessionId())
+        val names = (0 until effect.numberOfPresets).map { effect.getPresetName(it.toShort()) }
+        effect.release()
+        names.filter { it.isNotBlank() }
+    } catch (e: Exception) {
+        Log.w(TAG, "no equaliser on this device", e)
+        emptyList()
+    }
+
+    /**
+     * The document picker, which is the only way an app holding READ_MEDIA_AUDIO can
+     * read a `.lrc` sitting beside a song: that permission grants the audio files and
+     * nothing else in the folder they are in.
+     */
+    private fun pickMusicFolder() {
+        Toast.makeText(this, R.string.folder_needed, Toast.LENGTH_SHORT).show()
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
+        try {
+            startActivityForResult(intent, REQUEST_MUSIC_FOLDER)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "no document picker", e)
+            Toast.makeText(this, R.string.folder_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun onMusicFolderChosen(uri: Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "folder grant not persistable", e)
+        }
+        settings.musicFolder = uri.toString()
+        MusicFolder.forget()
+        // Songs already looked up were answered without this folder, and a miss is
+        // remembered for a week: the answers have to go with the question changing.
+        lyricsRepository.forget()
+        lyricsKey = null
+        lastSnapshot?.track?.let { requestLyrics(it) }
+        Toast.makeText(this, R.string.folder_set, Toast.LENGTH_SHORT).show()
+        showSettings()
+    }
 
     override fun onBrowseItemTapped(item: ListItem, position: Int) {
         // A search hit is not part of the browse tree, so the results are the context:

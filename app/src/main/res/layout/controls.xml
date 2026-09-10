@@ -9,6 +9,7 @@
     android:padding="11dp">
 
     <LinearLayout
+        android:id="@+id/controlsShell"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@drawable/shell"
@@ -96,6 +97,45 @@
                 android:scaleType="fitCenter"
                 android:padding="11dp"
                 android:contentDescription="@string/search" />
+
+            <ImageButton
+                android:id="@+id/btnGameMode"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_controller"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:contentDescription="@string/game_mode" />
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_settings"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:contentDescription="@string/settings" />
+
+            <ImageButton
+                android:id="@+id/btnSleep"
+                android:stateListAnimator="@animator/press_scale"
+                android:layout_width="45dp"
+                android:layout_height="45dp"
+                android:layout_marginStart="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_sleep"
+                android:tint="@color/ink"
+                android:scaleType="fitCenter"
+                android:padding="11dp"
+                android:contentDescription="@string/sleep_timer" />
 
             <ImageButton
                 android:id="@+id/btnShuffle"
@@ -459,6 +499,17 @@
                     android:visibility="gone" />
 
                 <TextView
+                    android:id="@+id/nearSleep"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/accent"
+                    android:textSize="12sp"
+                    android:singleLine="true"
+                    android:visibility="gone" />
+
+                <TextView
                     android:id="@+id/nearClock"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -525,6 +576,20 @@
                     android:scaleType="fitCenter"
                     android:padding="12dp"
                     android:contentDescription="@string/next" />
+
+                <!-- Only for a song on this device: nothing else here is ours to mark. -->
+                <ImageButton
+                    android:id="@+id/btnFavourite"
+                    android:stateListAnimator="@animator/press_scale"
+                    android:layout_width="52dp"
+                    android:layout_height="match_parent"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_heart"
+                    android:tint="@color/ink"
+                    android:scaleType="fitCenter"
+                    android:padding="14dp"
+                    android:visibility="gone"
+                    android:contentDescription="@string/favourite" />
             </LinearLayout>
 
         </LinearLayout>
