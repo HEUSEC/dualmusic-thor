@@ -35,6 +35,9 @@ class SpotifyWebApi(private val context: Context) {
         private const val TIMEOUT_MS = 10000
         private const val PAGE = 50
 
+        /** Search is capped lower than the other lists since February 2026; 50 is a 400. */
+        private const val SEARCH_PAGE = 10
+
         /** How much of a list is handed to the player as the queue. */
         private const val PLAY_MAX = 50
 
@@ -187,7 +190,7 @@ class SpotifyWebApi(private val context: Context) {
             val url = Uri.parse("$BASE/search").buildUpon()
                 .appendQueryParameter("q", trimmed)
                 .appendQueryParameter("type", "track")
-                .appendQueryParameter("limit", PAGE.toString())
+                .appendQueryParameter("limit", SEARCH_PAGE.toString())
                 .build().toString()
             tracksOf(getJson(url, token)?.optJSONObject("tracks")?.optJSONArray("items"), wrapped = false)
         }
